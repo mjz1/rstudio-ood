@@ -17,6 +17,8 @@ export R_LIBS_USER="<%= context.r_packages %>"
 # PAM auth helper used by RStudio
 export RSTUDIO_AUTH="${PWD}/bin/auth"
 
+export CONDA_SCRIPT="<%= context.conda_startup %>"
+
 # Generate an `rsession` wrapper script
 export RSESSION_WRAPPER_FILE="${PWD}/rsession.sh"
 (
@@ -26,8 +28,22 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
 
   # Export path to server binary
   # export PATH="/usr/lib/rstudio-server/bin/":${PATH}
+
+  # Initialize conda 
+  if [ -z ${CONDA_SCRIPT} ] || [ "$CONDA_SCRIPT" = "" ];
+    then
+      echo "No conda initialized"
+  else
+    echo "Initializing conda script: $CONDA_SCRIPT"
+    { # try
+      . $CONDA_SCRIPT
+    } || { 
+      echo "Conda not initialized properly"
+  }
+  fi
+
   # We fix the path and remove all the junk I had
-  export PATH=/usr/lib/rstudio-server/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+  export PATH=/usr/lib/rstudio-server/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 
   # Log all output from this script
   export RSESSION_LOG_FILE="${PWD}/rsession.log"
