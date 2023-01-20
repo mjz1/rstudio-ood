@@ -42,6 +42,10 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   }
   fi
 
+  # Propagate quarto python
+  # export QUARTO_PYTHON=${QUARTO_PYTHON}
+  export RSTUDIO_PANDOC="/usr/local/bin/pandoc"
+
   # We fix the path and remove all the junk I had
   export PATH=/usr/lib/rstudio-server/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 
@@ -97,13 +101,16 @@ singularity exec -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
  -B "$TMPDIR/local-share-rstudio:/home/rstudio/.local/share/rstudio" \
  -B "/work:/work" -B "/res:/res" \
+ -B "/warm:/warm" \
  -B "/juno/work:/juno/work" -B "/juno/res:/juno/res" \
  "<%= context.rstudio_image %>" rserver \
  --server-user="${RSTUDIO_USER}" \
  --www-port="${port}" \
  --auth-none=0 \
+ --auth-pam-require-password-prompt=0 \
  --auth-pam-helper-path="${RSTUDIO_AUTH}" \
  --auth-encrypt-password=0 \
+ --auth-timeout-minutes=600 \
  --rsession-path="${RSESSION_WRAPPER_FILE}"
 
 # note, rserver in the container will start with the user space environment defined on host
