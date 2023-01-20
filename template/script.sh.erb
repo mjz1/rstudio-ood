@@ -101,7 +101,6 @@ singularity exec -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
  -B "$TMPDIR/local-share-rstudio:/home/rstudio/.local/share/rstudio" \
  -B "/work:/work" -B "/res:/res" \
- -B "/warm:/warm" \
  -B "/juno/work:/juno/work" -B "/juno/res:/juno/res" \
  "<%= context.rstudio_image %>" rserver \
  --server-user="${RSTUDIO_USER}" \
