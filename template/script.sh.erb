@@ -31,6 +31,9 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # Export path to server binary
   # export PATH="/usr/lib/rstudio-server/bin/":${PATH}
 
+  # export CONDA_AUTO_ACTIVATE_BASE=false
+
+
   # Initialize conda 
   if [ -z ${CONDA_SCRIPT} ] || [ "$CONDA_SCRIPT" = "" ];
     then
@@ -88,7 +91,7 @@ export TMPDIR=`mktemp -d`
 mkdir -p $TMPDIR/{run,var-lib-rstudio-server,local-share-rstudio,usr}
 
 ## fix rstudio active session error on start
-find /home/zatzmanm/work/.rstudio/sessions/active/*/session-persistent-state -type f | xargs sed -i '' -e 's/abend="1"/abend="0"/'
+# find /home/zatzmanm/work/.rstudio/sessions/active/*/session-persistent-state -type f | xargs sed -i '' -e 's/abend="1"/abend="0"/'
 
 set -x
 # Launch the RStudio Server
