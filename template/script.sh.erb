@@ -17,9 +17,7 @@ export R_LIBS_USER="<%= context.r_packages %>"
 # PAM auth helper used by RStudio
 export RSTUDIO_AUTH="${PWD}/bin/auth"
 
-export LSF_BINDIR=/admin/lsfjuno/lsf/10.1/linux3.10-glibc2.17-x86_64/bin
 
-export CONDA_SCRIPT="<%= context.conda_startup %>"
 
 # Generate an `rsession` wrapper script
 export RSESSION_WRAPPER_FILE="${PWD}/rsession.sh"
@@ -28,42 +26,8 @@ umask 077
 sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   #!/usr/bin/env bash
 
-  # Export path to server binary
-  # export PATH="/usr/lib/rstudio-server/bin/":${PATH}
-
-  # export CONDA_AUTO_ACTIVATE_BASE=false
-
-
-  # Initialize conda 
-  if [ -z ${CONDA_SCRIPT} ] || [ "$CONDA_SCRIPT" = "" ];
-    then
-      echo "No conda initialized"
-  else
-    echo "Initializing conda script: $CONDA_SCRIPT"
-    { # try
-      . $CONDA_SCRIPT
-    } || { 
-      echo "Conda not initialized properly"
-  }
-  fi
-
-  # Propagate quarto python
-  # export QUARTO_PYTHON=${QUARTO_PYTHON}
-  export RSTUDIO_PANDOC="/usr/local/bin/pandoc"
-
-  # Get BSUB working
-  # source /etc_hpc/profile
-  # source /admin/lsfjuno/lsf/conf/profile.lsf
-  # export LSF_ENVDIR=/admin/lsfjuno/lsf/conf
-  # export LSF_SERVERDIR=/admin/lsfjuno/lsf/10.1/linux3.10-glibc2.17-x86_64/etc
-  # export PATH=$LSF_BINDIR:$PATH
-
   # We fix the path and remove all the junk I had
   export PATH=/usr/lib/rstudio-server/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
-
-  # Get BSUB working
-  # export PATH=/common/juno/OS7/10.1/linux3.10-glibc2.17-x86_64/bin:$PATH
-
 
   # Log all output from this script
   export RSESSION_LOG_FILE="${PWD}/rsession.log"
@@ -82,7 +46,7 @@ chmod 700 "${RSESSION_WRAPPER_FILE}"
 cd "${HOME}"
 
 # Output debug info
-module list
+# module list
 
 # echo old TMPDIR $TMPDIR
 export TMPDIR=`mktemp -d`
@@ -90,39 +54,27 @@ export TMPDIR=`mktemp -d`
 
 mkdir -p $TMPDIR/{run,var-lib-rstudio-server,local-share-rstudio,usr}
 
-## fix rstudio active session error on start
-# find /home/zatzmanm/work/.rstudio/sessions/active/*/session-persistent-state -type f | xargs sed -i '' -e 's/abend="1"/abend="0"/'
-
 set -x
 # Launch the RStudio Server
 echo "Starting up rserver..."
 
 export RSTUDIO_USER="${USER}"
 
-echo $USER
-echo $PASSWORD
-echo $RSTUDIO_USER
-echo $RSTUDIO_PASSWORD
-echo $R_LIBS_USER
 
 # User-installed R packages go into their home directory
-if [ ! -e ${HOME}/.Renviron ]
-then
-  printf '\nNOTE: creating ~/.Renviron file\n\n'
-  echo 'R_LIBS_USER=<%= context.r_packages %>' >> ${HOME}/.Renviron
-fi
+# if [ ! -e ${HOME}/.Renviron ]
+# then
+#   printf '\nNOTE: creating ~/.Renviron file\n\n'
+#   echo 'R_LIBS_USER=<%= context.r_packages %>' >> ${HOME}/.Renviron
+# fi
 
-# source /etc/profile
-# export LSF_ENVDIR=/admin/lsfjuno/lsf/conf
-# export LSF_SERVERDIR=/admin/lsfjuno/lsf/10.1/linux3.10-glibc2.17-x86_64/etc
 
 singularity exec -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/run:/run" \
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
  -B "$TMPDIR/local-share-rstudio:/home/rstudio/.local/share/rstudio" \
- -B "/work:/work" -B "/res:/res" \
- -B "/juno/work:/juno/work" -B "/juno/res:/juno/res" \
- -B "/admin:/admin" -B "/common:/common" \
+ -B "/data1:/data1" \
+ -B "/home/zatzmanm:/home/zatzmanm" \
  "<%= context.rstudio_image %>" rserver \
  --server-user="${RSTUDIO_USER}" \
  --www-port="${port}" \
