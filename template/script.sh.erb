@@ -26,8 +26,11 @@ umask 077
 sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   #!/usr/bin/env bash
 
+  echo 'slurm:x:300:300::/opt/slurm/slurm:/bin/false' >> /etc/passwd
   # We fix the path and remove all the junk I had
-  export PATH=/usr/lib/rstudio-server/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
+  export PATH=/usr/lib/rstudio-server/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.local/host/bin:$PATH
+
+  export XDG_CACHE_HOME="/home/zatzmanm/work/.cache/"
 
   # Log all output from this script
   export RSESSION_LOG_FILE="${PWD}/rsession.log"
@@ -54,26 +57,21 @@ export TMPDIR=`mktemp -d`
 
 mkdir -p $TMPDIR/{run,var-lib-rstudio-server,local-share-rstudio,usr}
 
+# fix rstudio active session error on start
+find /home/zatzmanm/work/.rstudio/sessions/active/*/session-persistent-state -type f -exec sed -i '{}' -e 's/abend="1"/abend="0"/' {} \;
+
 set -x
 # Launch the RStudio Server
 echo "Starting up rserver..."
 
 export RSTUDIO_USER="${USER}"
 
-
-# User-installed R packages go into their home directory
-# if [ ! -e ${HOME}/.Renviron ]
-# then
-#   printf '\nNOTE: creating ~/.Renviron file\n\n'
-#   echo 'R_LIBS_USER=<%= context.r_packages %>' >> ${HOME}/.Renviron
-# fi
-
-
 singularity exec -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/run:/run" \
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
  -B "$TMPDIR/local-share-rstudio:/home/rstudio/.local/share/rstudio" \
  -B "/data1:/data1" \
+ -B "/run/munge/,/etc/slurm/,/usr/lib64/slurm,/usr/lib64/libmunge.so.2" \
  -B "/home/zatzmanm:/home/zatzmanm" \
  "<%= context.rstudio_image %>" rserver \
  --server-user="${RSTUDIO_USER}" \
