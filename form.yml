@@ -57,9 +57,11 @@ attributes:
   rstudio_image:
     widget: "select"
     options:
-      - [ "4.5.1",  "/home/zatzmanm/work/images/rstudio/rstudio-v.4.5.1-1.sif" ,
+      - [ "4.5.1",  "/home/zatzmanm/work/images/rstudio/rstudio-v.4.5.1-1.sif",
           data-set-r-packages: '4.5']
-      - [ "4.3.2",  "/home/zatzmanm/work/images/rstudio/rstudio-v2.0.sif",
+      - [ "4.4.1",  "/home/zatzmanm/work/images/rstudio/rstudio-v2.0.sif",
+          data-set-r-packages: '4.4' ]
+      - [ "4.3.2",  "/home/zatzmanm/work/images/rstudio/rstudio-v1.1.sif",
           data-set-r-packages: '4.3' ]
     label: Rstudio image version
     help: Select an option
@@ -67,6 +69,7 @@ attributes:
     widget: "select"
     options:
       - [ "4.5",  "/home/zatzmanm/work/R/x86_64-pc-linux-gnu-library/4.5_singularity" ]
+      - [ "4.4",  "/home/zatzmanm/work/R/x86_64-pc-linux-gnu-library/4.4_singularity" ]
       - [ "4.3",  "/home/zatzmanm/work/R/x86_64-pc-linux-gnu-library/4.3_singularity" ]    
     label: R packages
     help: Select R version
