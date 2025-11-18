@@ -57,7 +57,7 @@ attributes:
   rstudio_image:
     widget: "select"
     options:
-      - [ "4.5.1",  "/home/zatzmanm/work/images/rstudio/rstudio-v.4.5.1-2.sif",
+      - [ "4.5.1",  "/home/zatzmanm/work/images/rstudio/rstudio-v4.5.1-2.sif",
           data-set-r-packages: '4.5']
       - [ "4.4.1",  "/home/zatzmanm/work/images/rstudio/rstudio-v2.0.sif",
           data-set-r-packages: '4.4' ]
