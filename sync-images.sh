@@ -25,6 +25,11 @@
 #
 set -euo pipefail
 
+# Config file written by install.sh; environment still wins over it.
+# shellcheck source=conf.sh
+[ -r "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/conf.sh" ] \
+    && . "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/conf.sh"
+
 IMAGE_DIR="${RSTUDIO_IMAGE_DIR:-$HOME/work/images/rstudio}"
 R_LIBS_ROOT="${R_LIBS_ROOT:-$HOME/work/R/x86_64-pc-linux-gnu-library}"
 GHCR_REPO="${RSTUDIO_GHCR_REPO:-mjz1/rstudio-img}"

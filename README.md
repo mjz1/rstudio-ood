@@ -128,21 +128,70 @@ fallback to a different R's library.
 
 ## Reusing this setup
 
-The app is parameterized on `$HOME`/`$USER`, so a second person needs to change
-comparatively little:
+```bash
+git clone git@github.com:mjz1/openondemandapps.git
+cd openondemandapps/rstudio_dev
+./install.sh
+```
 
-1. **Point `R_LIBS_ROOT` at your own library root.** R package libraries cannot
-   be shared across users in this layout. Create one directory per R minor
-   version you intend to use:
-   ```bash
-   mkdir -p ~/work/R/x86_64-pc-linux-gnu-library/{4.3,4.4,4.5,4.6}_singularity
-   ```
-   A version with no library directory is simply not offered by the form.
-2. **Point `RSTUDIO_IMAGE_DIR` at the images.** These can be shared read-only;
-   only `sync-images.sh` needs write access.
-3. `RSTUDIO_STATE_DIR` (default `~/work/.rstudio`) holds RStudio session state.
-4. `cluster: "iris"` in `form.yml.erb` and the `queue`/partition defaults are
-   site-specific.
+`install.sh` creates your R package libraries, installs the app under
+`~/ondemand/dev/`, writes a config file, and offers to source the shell wrappers
+from your `~/.bashrc`. It prompts for anything it needs and every answer has a
+sensible default. `--dry-run` shows what it would do without touching anything.
+
+```bash
+./install.sh --dry-run                            # preview
+./install.sh --yes                                # accept all defaults
+./install.sh --r-libs-root ~/Rlibs \
+             --image-dir /shared/images/rstudio \
+             --cluster iris --queue componc_cpu
+./install.sh --link                               # symlink the app instead of copying
+./install.sh --help
+```
+
+### Configuration
+
+`install.sh` writes `~/.config/rstudio_dev/config`, which is read by the
+OnDemand form (`form.yml.erb`), the job script (`script.sh.erb`),
+`sync-images.sh`, and `r-wrappers.sh`.
+
+It is a file rather than a set of environment variables because OnDemand renders
+the ERB templates inside the PUN, which does not reliably source your shell rc.
+Environment variables still take precedence when they are set, so one-off
+overrides work:
+
+```bash
+RSTUDIO_IMAGE_DIR=/tmp/testimages sync-images.sh
+```
+
+| Key | Meaning | Scope |
+|---|---|---|
+| `RSTUDIO_IMAGE_DIR` | where the `.sif` images live | shared, read-only is fine |
+| `R_LIBS_ROOT` | root of your R package libraries | **per-user** |
+| `RSTUDIO_VERSIONS` | R minor versions to track when syncing | per-user |
+| `RSTUDIO_CLUSTER` | OnDemand cluster id (`/etc/ood/config/clusters.d`) | site |
+| `RSTUDIO_QUEUE` | default Slurm partition for sessions | site |
+| `RSTUDIO_SYNC_PARTITION` | partition `sync-images.sh` submits pulls to | site |
+
+`RSTUDIO_STATE_DIR` (default `~/work/.rstudio`) holds RStudio session state and
+is read from the environment only.
+
+### What can and cannot be shared
+
+The **images can be shared**; point everyone's `RSTUDIO_IMAGE_DIR` at one
+directory, and only whoever runs `sync-images.sh --sync` needs write access.
+
+The **R package libraries cannot**. Packages are compiled against a specific R
+minor version and installed into a directory you own, so each user needs their
+own `R_LIBS_ROOT` with one `<ver>_singularity` subdirectory per R version. A
+version with no library directory is simply not offered by the form — which is
+deliberate, since R ignores a missing `R_LIBS_USER` silently.
+
+Your libraries start empty. Install into them from inside RStudio, or:
+
+```bash
+Rscript_ -e 'install.packages("data.table")'
+```
 
 ## Running rootless: two things the image needs help with
 

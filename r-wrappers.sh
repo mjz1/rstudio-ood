@@ -20,9 +20,15 @@
 # Someone reusing this must point R_LIBS_ROOT at their own library root.
 # ---------------------------------------------------------------------------
 
+# Config file written by install.sh; environment still wins over it.
+_rsd_here="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+# shellcheck source=conf.sh
+[ -r "$_rsd_here/conf.sh" ] && . "$_rsd_here/conf.sh"
+
 : "${RSTUDIO_IMAGE_DIR:=$HOME/work/images/rstudio}"
 : "${R_LIBS_ROOT:=$HOME/work/R/x86_64-pc-linux-gnu-library}"
-: "${RSTUDIO_SYNC:=$HOME/ondemand/dev/rstudio_dev/sync-images.sh}"
+: "${RSTUDIO_SYNC:=$_rsd_here/sync-images.sh}"
+unset _rsd_here
 
 # `latest` tracks the newest *image*, which may be an R version whose library
 # has not been populated yet. Default the wrappers to the newest R that has both

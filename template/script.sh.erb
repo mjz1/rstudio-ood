@@ -8,7 +8,23 @@
   r_minor = File.basename(image)[/(\d+\.\d+)/, 1]
   raise "cannot determine R version from image #{image}" if r_minor.nil?
 
-  r_libs_root = ENV.fetch('R_LIBS_ROOT', "#{ENV['HOME']}/work/R/x86_64-pc-linux-gnu-library")
+  # Same config file the form reads (written by install.sh); env wins if set.
+  rsd_conf = lambda do
+    path = ENV['RSTUDIO_DEV_CONFIG'] || File.join(Dir.home, '.config', 'rstudio_dev', 'config')
+    conf = {}
+    if File.readable?(path)
+      File.readlines(path).each do |line|
+        line = line.strip
+        next if line.empty? || line.start_with?('#')
+        k, v = line.split('=', 2)
+        conf[k.strip] = v.strip if k && v
+      end
+    end
+    conf
+  end.call
+
+  r_libs_root = ENV['R_LIBS_ROOT'] || rsd_conf['R_LIBS_ROOT'] ||
+                "#{Dir.home}/work/R/x86_64-pc-linux-gnu-library"
   r_libs      = File.join(r_libs_root, "#{r_minor}_singularity")
 -%>
 

@@ -21,8 +21,29 @@
 <%-
   require 'json'
 
-  image_dir   = ENV.fetch('RSTUDIO_IMAGE_DIR', "#{ENV['HOME']}/work/images/rstudio")
-  r_libs_root = ENV.fetch('R_LIBS_ROOT',       "#{ENV['HOME']}/work/R/x86_64-pc-linux-gnu-library")
+  # Config written by install.sh. This is read from a file rather than the
+  # environment because OnDemand renders this template inside the PUN, which
+  # does not reliably source your shell rc. Environment still wins if set.
+  rsd_conf = lambda do
+    path = ENV['RSTUDIO_DEV_CONFIG'] || File.join(Dir.home, '.config', 'rstudio_dev', 'config')
+    conf = {}
+    if File.readable?(path)
+      File.readlines(path).each do |line|
+        line = line.strip
+        next if line.empty? || line.start_with?('#')
+        k, v = line.split('=', 2)
+        conf[k.strip] = v.strip if k && v
+      end
+    end
+    conf
+  end.call
+
+  setting = lambda { |key, default| ENV[key] || rsd_conf[key] || default }
+
+  image_dir   = setting.call('RSTUDIO_IMAGE_DIR', "#{Dir.home}/work/images/rstudio")
+  r_libs_root = setting.call('R_LIBS_ROOT',       "#{Dir.home}/work/R/x86_64-pc-linux-gnu-library")
+  cluster     = setting.call('RSTUDIO_CLUSTER',   'iris')
+  queue       = setting.call('RSTUDIO_QUEUE',     'cpu')
 
   info = {}
   manifest = File.join(image_dir, 'images.json')
@@ -52,7 +73,7 @@
   end
 -%>
 
-cluster: "iris"
+cluster: "<%= cluster %>"
 
 attributes:
   modules: ""
@@ -60,7 +81,7 @@ attributes:
 
   queue:
     label: "Queue"
-    value: "cpu"
+    value: "<%= queue %>"
   num_cores:
     widget: "number_field"
     label: "Number of cores"
