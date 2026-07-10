@@ -116,15 +116,20 @@ Sessions are now isolated by a **named slot**:
 - The launch form has a **Session** dropdown listing your existing slots (newest
   first, with a "last used" hint) — pick one to resume its state — plus a **New
   session name** field to start a fresh named slot.
-- Each slot gets its own `XDG_DATA_HOME` and `XDG_CACHE_HOME` under
-  `~/.rstudio-sessions/<slot>/`, so concurrent sessions never touch each other's
-  open documents, console history, or session registry.
-- **Preferences are shared** (`XDG_CONFIG_HOME` stays `~/.config`), so themes,
-  keybindings, and settings are consistent across every session. Your R package
-  library is shared too.
-- Slot state **persists** on `$HOME`, so a slot resumes where you left it. The
-  Slurm job is named `rstudio-<slot>` so concurrent sessions are distinguishable
-  in `squeue`.
+- Each slot gets its own `XDG_DATA_HOME` under
+  `~/work/.rstudio-sessions/<slot>/data`, so concurrent sessions never touch each
+  other's open documents, console history, or session registry. Slots live under
+  `~/work` (a symlink to `/data1`), **not your space-limited `$HOME`**.
+- **The cache and preferences stay shared.** `XDG_CACHE_HOME` (`~/work/.cache`)
+  is deliberately *not* per-slot — renv keeps its package library there
+  (`$XDG_CACHE_HOME/R/renv`), so isolating it would move every project's library
+  out from under `.libPaths()`. `XDG_CONFIG_HOME` (`~/.config`) is shared too, so
+  themes/keybindings/settings and your R package library are consistent across
+  sessions.
+- Slot state **persists**, so a slot resumes where you left it. The Slurm job is
+  named `rstudio-<slot>` so concurrent sessions are distinguishable in `squeue`.
+- **Note:** packages that cache *data* under `XDG_DATA_HOME` (e.g. `SeuratData`)
+  become per-slot, so you'd install those datasets once per slot.
 
 Reconnecting to a session that is still **running** is done from OnDemand's *My
 Interactive Sessions* page (as always); the form's Session dropdown is for

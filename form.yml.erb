@@ -97,7 +97,7 @@
   # without colliding, and each slot's RStudio state persists across relaunches.
   # Discover existing slots here so the form can offer them for resume, newest
   # first, with a last-used hint from the directory mtime.
-  slots_root = File.join(Dir.home, '.rstudio-sessions')
+  slots_root = File.join(Dir.home, 'work', '.rstudio-sessions')
   ago = lambda do |t|
     s = Time.now - t
     next 'just now'          if s < 60

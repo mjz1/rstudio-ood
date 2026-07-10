@@ -15,7 +15,7 @@
   raw_slot = (context.respond_to?(:new_session_name) ? context.new_session_name.to_s : '')
   raw_slot = context.session_name.to_s if raw_slot.strip.empty? && context.respond_to?(:session_name)
   # One path segment (no slashes survive), leading dots stripped so it is never a
-  # dotfile or "." / ".." -- so it cannot traverse out of ~/.rstudio-sessions.
+  # dotfile or "." / ".." -- so it cannot traverse out of ~/work/.rstudio-sessions.
   slot = raw_slot.strip.gsub(/[^A-Za-z0-9._-]/, '_').sub(/\A\.+/, '')
   slot = 'default' if slot.empty?
 
@@ -103,13 +103,14 @@ fi
 # ------------------------------------------------------------------------------
 
 # Named session slot. Each slot gets its own XDG_DATA_HOME (RStudio session and
-# workspace state) and XDG_CACHE_HOME, so multiple sessions run concurrently
-# without stepping on each other's `~/.local/share/rstudio`. XDG_CONFIG_HOME is
-# left at its default (~/.config) so preferences/keybindings/themes stay shared.
-# The slot dir persists on $HOME, so a slot's state survives relaunch and can be
-# resumed from the form's Session dropdown.
+# workspace state), so multiple sessions run concurrently without stepping on
+# each other's session registry. XDG_CACHE_HOME and XDG_CONFIG_HOME stay shared
+# (renv library + preferences). Slots live under ~/work (a symlink to /data1),
+# NOT $HOME proper, which is small -- so slot state does not consume the home
+# quota. The slot dir persists, so a slot resumes and shows in the Session
+# dropdown.
 SESSION_SLOT="<%= slot %>"
-SLOT_DIR="${HOME}/.rstudio-sessions/${SESSION_SLOT}"
+SLOT_DIR="${HOME}/work/.rstudio-sessions/${SESSION_SLOT}"
 mkdir -p "${SLOT_DIR}/data" "${HOME}/work/.cache"
 echo "RStudio session slot: ${SESSION_SLOT}  (state in ${SLOT_DIR}/data; cache + renv shared)"
 
