@@ -134,6 +134,14 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # XDG_CONFIG_HOME is likewise left at ~/.config so preferences stay shared.
   export XDG_CACHE_HOME="${HOME}/work/.cache/"
 
+  # Session signifier: expose the slot to R, and load a site profile that shows
+  # it (see the site-profile.R written below). R_PROFILE is the SITE profile, so
+  # it runs before -- and does not replace -- the user's ~/.Rprofile or a
+  # project's renv .Rprofile; our profile re-sources the image's own site file
+  # so the CRAN snapshot etc. are preserved.
+  export RSTUDIO_SESSION_SLOT="${SESSION_SLOT}"
+  export R_PROFILE="/tmp/site-profile.R"
+
   # torch: on a GPU job, use the CUDA build matching this node's driver (chosen
   # above). Empty on CPU jobs, so this line vanishes and torch stays CPU.
   ${TORCH_CUDA_EXPORT}
@@ -162,6 +170,27 @@ export TMPDIR=`mktemp -d`
 # echo new TMPDIR $TMPDIR
 
 mkdir -p $TMPDIR/{run,var-lib-rstudio-server,local-share-rstudio,usr}
+
+# R site profile that signals which named session slot you are in: it sets the
+# console prompt to "[<slot>] > " and prints a one-line banner at startup. $TMPDIR
+# is bound to /tmp in the container, so R_PROFILE=/tmp/site-profile.R (set in the
+# rsession wrapper) points here. As the SITE profile it runs before the user's
+# ~/.Rprofile and any project renv profile, and re-sources the image's own site
+# file so its settings (CRAN snapshot) are kept. The slot arrives via
+# RSTUDIO_SESSION_SLOT, so this file itself is static.
+cat > "${TMPDIR}/site-profile.R" <<'RPROFILE'
+local({
+  orig <- file.path(R.home("etc"), "Rprofile.site")
+  if (file.exists(orig)) sys.source(orig, envir = globalenv())
+})
+local({
+  slot <- Sys.getenv("RSTUDIO_SESSION_SLOT", unset = "")
+  if (nzchar(slot)) {
+    options(prompt = sprintf("[%s] > ", slot))
+    message(sprintf("-- RStudio session slot: %s --", slot))
+  }
+})
+RPROFILE
 
 # RStudio Server 2026.06+ treats an unreadable /etc/rstudio/database.conf as a
 # fatal error; 2025.09 tolerated it. The rstudio-server deb ships that file
