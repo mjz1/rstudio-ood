@@ -86,7 +86,15 @@ _r_libs_of() {
 _r_exec() {   # _r_exec <sif> <libs> <cmd> [args...]
     local sif="$1" libs="$2"; shift 2
     module purge
-    SINGULARITYENV_R_LIBS_USER="$libs" singularity exec \
+    # This host exports SSL_CERT_FILE/SSL_CERT_DIR pointing at /etc/pki (RHEL),
+    # and Singularity forwards them into the Ubuntu container where those paths
+    # do not exist. OpenSSL-based TLS then fails -- Quarto (Deno) reports
+    # "Failed to load platform certificates". Remap to the container's bundle
+    # rather than --cleanenv, which would also drop SLURM_* and R_LIBS_USER.
+    SINGULARITYENV_R_LIBS_USER="$libs" \
+    SINGULARITYENV_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    SINGULARITYENV_SSL_CERT_DIR=/etc/ssl/certs \
+    singularity exec \
         -B "/data1:/data1" \
         -B "/run/munge/,/etc/slurm/,/usr/lib64/slurm,/usr/lib64/libmunge.so.2" \
         -B "$HOME:$HOME" \

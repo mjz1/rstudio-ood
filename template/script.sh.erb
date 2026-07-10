@@ -127,6 +127,12 @@ echo "Starting up rserver..."
 
 export RSTUDIO_USER="${USER}"
 
+# Singularity forwards the host environment into the container, and this host
+# exports SSL_CERT_FILE=/etc/pki/... and SSL_CERT_DIR=/etc/pki/... -- RHEL paths
+# that do not exist inside the Ubuntu image. Anything doing TLS with OpenSSL
+# then fails; Quarto (Deno) dies with "Failed to load platform certificates".
+# Point them at the container's own CA bundle rather than using --cleanenv,
+# which would also strip SLURM_* and the RStudio variables we rely on.
 singularity exec -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/run:/run" \
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
@@ -135,6 +141,8 @@ singularity exec -B "$TMPDIR:/tmp" \
  -B "/data1:/data1" \
  -B "/run/munge/,/etc/slurm/,/usr/lib64/slurm,/usr/lib64/libmunge.so.2" \
  -B "${HOME}:${HOME}" \
+ --env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+ --env SSL_CERT_DIR=/etc/ssl/certs \
  "<%= image %>" rserver \
  --database-config-file=/tmp/database.conf \
  --server-user="${RSTUDIO_USER}" \
