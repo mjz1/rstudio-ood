@@ -74,6 +74,27 @@ export TMPDIR=`mktemp -d`
 
 mkdir -p $TMPDIR/{run,var-lib-rstudio-server,local-share-rstudio,usr}
 
+# RStudio Server 2026.06+ treats an unreadable /etc/rstudio/database.conf as a
+# fatal error; 2025.09 tolerated it. The rstudio-server deb ships that file
+# 0600 root:root, which is fine under Docker (where you are root) but unreadable
+# under Singularity, where you are not. Point rserver at our own copy. Older
+# RStudio accepts the same flag, so this is safe across all images.
+cat > "${TMPDIR}/database.conf" <<'DBCONF'
+provider=sqlite
+directory=/var/lib/rstudio-server
+DBCONF
+chmod 600 "${TMPDIR}/database.conf"
+
+# rocker's install_rstudio.sh sets logger-type=syslog, and there is no syslog in
+# the container -- so rserver startup failures vanish silently and the only
+# symptom is `wait_until_port_used` timing out. Log to stderr so they land in
+# this job's output.log instead.
+cat > "${TMPDIR}/logging.conf" <<'LOGCONF'
+[*]
+log-level=warn
+logger-type=stderr
+LOGCONF
+
 # Clear the "session did not exit cleanly" prompt from prior sessions.
 # The old `find ... -exec sed -i '{}' -e ... {} \;` passed the filename twice and
 # errored when the glob matched nothing; nullglob makes the empty case a no-op.
@@ -94,10 +115,12 @@ singularity exec -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/run:/run" \
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
  -B "$TMPDIR/local-share-rstudio:/home/rstudio/.local/share/rstudio" \
+ -B "$TMPDIR/logging.conf:/etc/rstudio/logging.conf" \
  -B "/data1:/data1" \
  -B "/run/munge/,/etc/slurm/,/usr/lib64/slurm,/usr/lib64/libmunge.so.2" \
  -B "${HOME}:${HOME}" \
  "<%= image %>" rserver \
+ --database-config-file=/tmp/database.conf \
  --server-user="${RSTUDIO_USER}" \
  --www-port="${port}" \
  --auth-none=0 \

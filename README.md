@@ -144,6 +144,37 @@ comparatively little:
 4. `cluster: "iris"` in `form.yml.erb` and the `queue`/partition defaults are
    site-specific.
 
+## Running rootless: two things the image needs help with
+
+`rstudio-img` reinstalls the RStudio Server deb on top of the rocker base rather
+than letting rocker's `install_rstudio.sh` do it, and does not replay that
+script's post-install fixups. Two of those matter when running rootless under
+Singularity, and `script.sh.erb` compensates for both:
+
+1. **`/etc/rstudio/database.conf` is `0600 root:root`.** Fine under Docker,
+   where you are root. Under Singularity you are not, and **RStudio Server
+   2026.06+ treats an unreadable `database.conf` as fatal** where 2025.09 merely
+   ignored it. Symptom: `rserver` exits 1 instantly and the session dies with
+   `Timed out waiting for RStudio Server to open port`. We write our own
+   `database.conf` into `$TMPDIR` and pass `--database-config-file`. Older
+   RStudio accepts the same flag, so it is safe across all images.
+2. **`logger-type=syslog`** (rocker's default) means there is no syslog in the
+   container, so `rserver` startup failures produce *no output at all*. We bind
+   a `logging.conf` with `logger-type=stderr` so errors reach the job's
+   `output.log`.
+
+The cleaner fix is upstream, in `rstudio-img`'s Dockerfile, after the deb
+install — mirroring what rocker does:
+
+```dockerfile
+RUN chmod 0644 /etc/rstudio/database.conf \
+ && rm -f /var/lib/rstudio-server/secure-cookie-key
+```
+
+`database.conf` holds only `provider=sqlite` by default, so widening it to
+world-readable leaks nothing. Until that lands, the workarounds above are what
+make the images usable rootless.
+
 ## Known issues
 
 - **`template/before.sh.erb` sets the RStudio password to the literal string
