@@ -22,7 +22,7 @@ _rsd_load_conf() {
         key="${key//[[:space:]]/}"
 
         case "$key" in
-            RSTUDIO_IMAGE_DIR|R_LIBS_ROOT|RSTUDIO_VERSIONS|RSTUDIO_CLUSTER|RSTUDIO_QUEUE|RSTUDIO_SYNC_PARTITION) ;;
+            RSTUDIO_IMAGE_DIR|R_LIBS_ROOT|RSTUDIO_VERSIONS|RSTUDIO_CLUSTER|RSTUDIO_QUEUE|RSTUDIO_SYNC_PARTITION|RSTUDIO_TORCH_CUDA) ;;
             *) continue ;;                       # ignore unknown keys, don't eval them
         esac
 

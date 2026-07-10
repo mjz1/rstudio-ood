@@ -12,11 +12,42 @@
 #   ./install.sh --r-libs-root ~/Rlibs --image-dir /shared/images/rstudio
 #   ./install.sh --dry-run              show what would happen, change nothing
 #
+# Or run it straight from the internet, no checkout needed:
+#   curl -fsSL https://raw.githubusercontent.com/mjz1/openondemandapps/master/rstudio_dev/install.sh | bash
+#   curl -fsSL .../install.sh | bash -s -- --yes --queues componc_cpu,componc_gpu_batch
+#
 # Run --help for the full list.
 #
 set -euo pipefail
 
-SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="${RSTUDIO_DEV_REPO:-mjz1/openondemandapps}"
+REF="${RSTUDIO_DEV_REF:-master}"
+
+# ${BASH_SOURCE[0]} is unset when the script is piped into bash (`curl | bash`),
+# which trips `set -u`; the :- default yields an empty path whose dirname is `.`,
+# and the sibling-file check below then correctly routes to the bootstrap.
+SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}")" 2>/dev/null && pwd || echo /nonexistent)"
+
+# Self-bootstrap. When run without a repo checkout -- the `curl ... | bash` path,
+# where BASH_SOURCE is a pipe and the sibling files are not on disk -- fetch the
+# repo and re-run install.sh from it. A checkout is detected by the presence of
+# the sibling files this app is made of.
+if [ ! -f "$SRC_DIR/sync-images.sh" ] || [ ! -f "$SRC_DIR/form.yml.erb" ]; then
+    echo "Fetching rstudio_dev from github.com/${REPO} (${REF})..."
+    _boot="$(mktemp -d)"
+    trap 'rm -rf "$_boot"' EXIT
+    if command -v git >/dev/null 2>&1; then
+        git clone --quiet --depth 1 --branch "$REF" "https://github.com/${REPO}.git" "$_boot/repo" \
+            || { echo "error: git clone failed" >&2; exit 1; }
+    else
+        curl -fsSL "https://codeload.github.com/${REPO}/tar.gz/refs/heads/${REF}" | tar -xz -C "$_boot" \
+            || { echo "error: download failed (need git or a reachable codeload.github.com)" >&2; exit 1; }
+        mv "$_boot"/*-"${REF}" "$_boot/repo"
+    fi
+    # Mark the re-run so it can reject --link against this temporary checkout.
+    RSTUDIO_DEV_BOOTSTRAP_TMP=1 bash "$_boot/repo/rstudio_dev/install.sh" "$@"
+    exit $?
+fi
 
 # Defaults. Every one is overridable by flag, and afterwards by the config file
 # or the environment at runtime.
@@ -25,6 +56,7 @@ DEF_R_LIBS_ROOT="$HOME/work/R/x86_64-pc-linux-gnu-library"
 DEF_APP_DIR="$HOME/ondemand/dev/rstudio_dev"
 DEF_CLUSTER="iris"
 DEF_QUEUE="cpu"
+DEF_QUEUES=""                  # empty = Queue dropdown offers just $QUEUE
 DEF_SYNC_PARTITION="cpushort"
 DEF_R_VERSIONS="auto"          # auto = every rstudio-<ver>.sif found in IMAGE_DIR
 
@@ -35,6 +67,7 @@ R_LIBS_ROOT="$DEF_R_LIBS_ROOT"
 APP_DIR="$DEF_APP_DIR"
 CLUSTER="$DEF_CLUSTER"
 QUEUE="$DEF_QUEUE"
+QUEUES="$DEF_QUEUES"
 SYNC_PARTITION="$DEF_SYNC_PARTITION"
 R_VERSIONS="$DEF_R_VERSIONS"
 ASSUME_YES=0
@@ -46,6 +79,58 @@ die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 warn() { printf '\033[33mwarn:\033[0m %s\n' "$*" >&2; }
 info() { printf '  %s\n' "$*"; }
 run()  { if (( DRY_RUN )); then printf '  [dry-run] %s\n' "$*"; else eval "$@"; fi; }
+
+# Humanize a Slurm time limit: 7-00:00:00 -> 7d, 1-00:00:00 -> 1d, 2:00:00 -> 2h.
+_humanize_time() {
+    case "$1" in
+        *-*)   printf '%sd' "${1%%-*}" ;;
+        *:*:*) printf '%sh' "${1%%:*}" ;;
+        *)     printf '%s' "$1" ;;
+    esac
+}
+
+# Build a human label for a partition from Slurm: GPU types and max wall time,
+# plus a use-case hint from the name. Best-effort -- if a queue already carries a
+# `|label`, or Slurm is unreachable, the bare name is used unchanged. This is why
+# the labels live in config (generated once here, on a login node where scontrol
+# and sinfo exist) rather than in the form's ERB, which renders inside the PUN.
+_queue_label() {
+    local q="$1" p mt gpus gres use
+    case "$q" in *"|"*) printf '%s' "$q"; return ;; esac   # already labelled
+    p="$q"
+    command -v scontrol >/dev/null 2>&1 || { printf '%s' "$p"; return; }
+    mt="$(scontrol show partition "$p" 2>/dev/null | grep -oE 'MaxTime=[^ ]+' | cut -d= -f2)"
+    [ -n "$mt" ] || { printf '%s' "$p"; return; }           # unknown partition
+    if [[ "$p" == *gpu* ]]; then
+        gpus="$(sinfo -h -p "$p" -o '%G' 2>/dev/null | tr ',' '\n' \
+                | grep -oE 'gpu:[a-z0-9_]+' | sed 's/gpu://; s/nvidia_h200_nvl/h200/; s/nvidia_//' \
+                | tr '[:lower:]' '[:upper:]' | sort -u | paste -sd/ -)"
+        gres="GPU ${gpus:-?}"
+    else
+        gres="CPU"
+    fi
+    case "$p" in
+        *_int)    use=' · interactive' ;;
+        *_batch)  use=' · batch' ;;
+        *_preem*) use=' · preemptible' ;;
+        *)        use='' ;;
+    esac
+    # Intra-label separators must NOT be commas: commas delimit entries in
+    # RSTUDIO_QUEUES, so a comma in a label would split it in the form. Use " · ".
+    printf '%s|%s — %s · <=%s%s' "$p" "$p" "$gres" "$(_humanize_time "$mt")" "$use"
+}
+
+# Expand a comma-separated queue list into `partition|label` entries.
+_enrich_queues() {
+    local list="$1" out="" q
+    local IFS=','
+    for q in $list; do
+        q="${q#"${q%%[![:space:]]*}"}"; q="${q%"${q##*[![:space:]]}"}"  # trim
+        [ -z "$q" ] && continue
+        out+="${out:+,}$(_queue_label "$q")"
+    done
+    printf '%s' "$out"
+}
 
 usage() {
     cat <<EOF
@@ -62,8 +147,11 @@ Usage: ./install.sh [options]
                           default: $DEF_APP_DIR
   --cluster NAME          OnDemand cluster id (see /etc/ood/config/clusters.d)
                           default: $DEF_CLUSTER
-  --queue NAME            Default Slurm partition for sessions
+  --queue NAME            Default Slurm partition, pre-selected in the form
                           default: $DEF_QUEUE
+  --queues "A,B,C"        Comma-separated partitions to offer in the Queue
+                          dropdown, including GPU ones (e.g.
+                          componc_cpu,componc_gpu_batch). Empty = just --queue.
   --sync-partition NAME   Partition sync-images.sh submits image pulls to
                           default: $DEF_SYNC_PARTITION
   --shell-init PATH|none  rc file to add the r-wrappers.sh source line to.
@@ -83,6 +171,7 @@ while (( $# )); do
         --app-dir)         APP_DIR="$2"; shift 2 ;;
         --cluster)         CLUSTER="$2"; shift 2 ;;
         --queue)           QUEUE="$2"; shift 2 ;;
+        --queues)          QUEUES="$2"; shift 2 ;;
         --sync-partition)  SYNC_PARTITION="$2"; shift 2 ;;
         --shell-init)      SHELL_INIT="$2"; shift 2 ;;
         --link)            DO_LINK=1; shift ;;
@@ -93,7 +182,23 @@ while (( $# )); do
     esac
 done
 
-interactive() { [[ -t 0 && $ASSUME_YES -eq 0 ]]; }
+# --link against the throwaway checkout a `curl | bash` run created would leave a
+# dangling symlink once the temp dir is cleaned up. Fail fast, before the plan
+# preview claims it will symlink.
+if (( DO_LINK )) && [[ -n "${RSTUDIO_DEV_BOOTSTRAP_TMP:-}" ]]; then
+    printf '\033[31merror:\033[0m %s\n' \
+      "--link needs a persistent checkout; clone the repo and run ./install.sh --link from it" >&2
+    exit 1
+fi
+
+# Interactive if not --yes and a controlling terminal is reachable. Gate on
+# /dev/tty rather than `-t 0`: under `curl | bash` stdin is the pipe (so `-t 0`
+# is false), but /dev/tty is still the user's terminal -- and every prompt below
+# already reads from it.
+interactive() {
+    (( ASSUME_YES )) && return 1
+    [[ -e /dev/tty ]] && (exec </dev/tty) 2>/dev/null
+}
 
 ask() {  # ask <prompt> <default> -> echoes answer
     local prompt="$1" default="$2" reply
@@ -148,11 +253,19 @@ read -r -a VERSIONS <<<"$R_VERSIONS"
 echo "Plan"
 echo "----"
 info "images         $IMAGE_DIR  (${#FOUND[@]} found: ${FOUND[*]:-none})"
+# Enrich the queue list with Slurm-derived labels (GPU types, wall-time limits)
+# now, on this login node. The form just displays them.
+QUEUES_OUT="$(_enrich_queues "${QUEUES:-$QUEUE}")"
+
 info "R libraries    $R_LIBS_ROOT"
 info "R versions     ${VERSIONS[*]}"
 info "app            $APP_DIR  $( ((DO_LINK)) && echo '(symlink)' || echo '(copy)')"
 info "config         $CONFIG_PATH"
 info "cluster/queue  $CLUSTER / $QUEUE"
+if [ -n "$QUEUES_OUT" ]; then
+    info "queues:"
+    printf '%s\n' "$QUEUES_OUT" | tr ',' '\n' | sed 's/^/                 /'
+fi
 echo
 
 if interactive; then
@@ -208,6 +321,7 @@ R_LIBS_ROOT=$R_LIBS_ROOT
 RSTUDIO_VERSIONS=${VERSIONS[*]}
 RSTUDIO_CLUSTER=$CLUSTER
 RSTUDIO_QUEUE=$QUEUE
+RSTUDIO_QUEUES=$QUEUES_OUT
 RSTUDIO_SYNC_PARTITION=$SYNC_PARTITION
 EOF
 else
@@ -232,6 +346,12 @@ RSTUDIO_VERSIONS=${VERSIONS[*]}
 # OnDemand cluster id, and the default Slurm partition for sessions.
 RSTUDIO_CLUSTER=$CLUSTER
 RSTUDIO_QUEUE=$QUEUE
+
+# Comma-separated partitions offered in the Queue dropdown, including GPU-capable
+# ones (e.g. componc_cpu,componc_gpu_batch,componc_gpu_int). GPU partitions are
+# account-specific, so set them to what your account may submit to. Empty =
+# offer only RSTUDIO_QUEUE.
+RSTUDIO_QUEUES=$QUEUES_OUT
 
 # Partition that sync-images.sh submits image pulls to. The pull is ~4 GB plus a
 # squashfs build, so it does not belong on a login node.

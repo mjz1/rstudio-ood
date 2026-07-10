@@ -23,3 +23,16 @@ script:
      - "<%= memory %>G"
      - "--time"
      - "<%= num_hours %>:00:00"
+<%-
+  # submit.yml.erb exposes form values as bare locals (like `queue` and
+  # `num_cores` above), NOT via `context` -- that is script.sh.erb's binding.
+  # `num_gpus` may be a string or absent; coerce defensively.
+  gpus = (defined?(num_gpus) ? num_gpus : 0).to_i
+-%>
+<%- if gpus > 0 -%>
+     # Only emitted when GPUs > 0. The selected partition must be GPU-capable
+     # and permit this account; see the queue dropdown. --nv is added later, at
+     # session start, based on whether the granted node actually exposes a device.
+     - "--gres"
+     - "gpu:<%= gpus %>"
+<%- end -%>

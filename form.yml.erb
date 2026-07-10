@@ -45,6 +45,26 @@
   cluster     = setting.call('RSTUDIO_CLUSTER',   'iris')
   queue       = setting.call('RSTUDIO_QUEUE',     'cpu')
 
+  # Partitions offered in the Queue dropdown. `RSTUDIO_QUEUES` is a
+  # comma-separated list; if unset, fall back to the single `queue` value so a
+  # fresh install behaves exactly as before. GPU partitions are site-specific
+  # (e.g. this cluster denies `shahs3` on the shared `gpu` partition but allows
+  # `componc_gpu_batch`), which is precisely why they come from config, not code.
+  #
+  # Each entry is `partition` or `partition|Human readable label`. install.sh
+  # generates the labels from Slurm (GPU types, max wall time), so the dropdown
+  # shows e.g. "componc_gpu_int — GPU: H100/H200 · <=1d · interactive". The
+  # submitted value is always the bare partition (before the `|`).
+  queue_opts = setting.call('RSTUDIO_QUEUES', queue)
+                      .split(',').map(&:strip).reject(&:empty?)
+                      .map do |entry|
+    value, label = entry.split('|', 2)
+    value = value.to_s.strip
+    label = (label && !label.strip.empty?) ? label.strip : value
+    [label, value]
+  end
+  queue_opts = [[queue, queue]] if queue_opts.empty?
+
   info = {}
   manifest = File.join(image_dir, 'images.json')
   if File.readable?(manifest)
@@ -80,8 +100,14 @@ attributes:
   extra_rstudio_args: ""
 
   queue:
+    widget: "select"
     label: "Queue"
     value: "<%= queue %>"
+    help: "Pick a GPU partition (and set GPUs > 0) to get a GPU."
+    options:
+<%- queue_opts.each do |label, value| -%>
+      - [ "<%= label %>", "<%= value %>" ]
+<%- end -%>
   num_cores:
     widget: "number_field"
     label: "Number of cores"
@@ -89,6 +115,13 @@ attributes:
     help: "Maximum number of CPU cores is 72"
     min: 1
     step: 1
+  num_gpus:
+    widget: "number_field"
+    label: "Number of GPUs"
+    value: 0
+    min: 0
+    step: 1
+    help: "Requires a GPU partition above. 0 = CPU-only. Each GPU also grants 1 core by default."
   num_hours:
     widget: "number_field"
     label: "Number of hours"
@@ -122,6 +155,7 @@ form:
   - modules
   - queue
   - num_cores
+  - num_gpus
   - num_hours
   - memory
   - rstudio_image

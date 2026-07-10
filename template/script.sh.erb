@@ -50,7 +50,46 @@ fi
 # PAM auth helper used by RStudio
 export RSTUDIO_AUTH="${PWD}/bin/auth"
 
+# ---- GPU passthrough decision -------------------------------------------------
+# Computed here (before the rsession wrapper is written) so the chosen CUDA build
+# can be exported into the R session.
+#
+# Enable --nv only when Slurm actually GRANTED a GPU, signalled via
+# CUDA_VISIBLE_DEVICES / SLURM_JOB_GPUS (set by the gres plugin). Do NOT probe
+# /dev/nvidia*: a CPU job that lands on a GPU-capable node (GPU nodes are in CPU
+# partitions too) sees those device files despite being granted no GPU, so
+# probing them would enable --nv for a CPU session and let it grab a GPU
+# allocated to another user. --nv binds only the host driver (libcuda.so).
+NV_FLAG=""
+TORCH_CUDA_EXPORT=""
+if [ -n "${CUDA_VISIBLE_DEVICES:-}" ] || [ -n "${SLURM_JOB_GPUS:-}" ] || [ -n "${GPU_DEVICE_ORDINAL:-}" ]; then
+  NV_FLAG="--nv"
+  echo "GPU granted (CUDA_VISIBLE_DEVICES='${CUDA_VISIBLE_DEVICES:-}', SLURM_JOB_GPUS='${SLURM_JOB_GPUS:-}') -> enabling Singularity --nv"
 
+  # Pick the R torch CUDA build for THIS node, rather than hardcoding one: the
+  # highest torch-supported build that does not exceed the driver's max CUDA
+  # (from nvidia-smi). Read live per node, so it adapts to per-node drivers and
+  # future upgrades. The image ships no CUDA toolkit, so torch's auto-installer
+  # would otherwise fetch the CPU build; exporting CUDA into the R session makes
+  # torch::install_torch() fetch the matching GPU build (only the driver is
+  # needed at runtime -- the build bundles the toolkit). The supported list is
+  # config-overridable (RSTUDIO_TORCH_CUDA) so new cuXXX builds need no code edit.
+  _torch_cuda_supported="<%= (rsd_conf['RSTUDIO_TORCH_CUDA'] || '12.9 12.8 12.6') %>"
+  _cuda_ceiling="$(nvidia-smi 2>/dev/null | grep -oE 'CUDA Version: [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+  if [ -n "${_cuda_ceiling}" ]; then
+    for _b in ${_torch_cuda_supported}; do
+      if [ "$(printf '%s\n%s\n' "${_b}" "${_cuda_ceiling}" | sort -V | tail -1)" = "${_cuda_ceiling}" ]; then
+        TORCH_CUDA_EXPORT="export CUDA=\"${_b}\""
+        echo "R torch -> CUDA ${_b} (node driver supports up to ${_cuda_ceiling})"
+        break
+      fi
+    done
+    [ -n "${TORCH_CUDA_EXPORT}" ] || echo "No torch CUDA build <= driver ${_cuda_ceiling}; leaving CUDA unset (torch will choose)"
+  fi
+else
+  echo "No GPU granted to this job -> CPU-only (no --nv)"
+fi
+# ------------------------------------------------------------------------------
 
 # Generate an `rsession` wrapper script
 export RSESSION_WRAPPER_FILE="${PWD}/rsession.sh"
@@ -64,6 +103,10 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   export PATH=/usr/lib/rstudio-server/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.local/host/bin:$PATH
 
   export XDG_CACHE_HOME="${HOME}/work/.cache/"
+
+  # torch: on a GPU job, use the CUDA build matching this node's driver (chosen
+  # above). Empty on CPU jobs, so this line vanishes and torch stays CPU.
+  ${TORCH_CUDA_EXPORT}
 
   # Log all output from this script
   export RSESSION_LOG_FILE="${PWD}/rsession.log"
@@ -127,13 +170,16 @@ echo "Starting up rserver..."
 
 export RSTUDIO_USER="${USER}"
 
+# NV_FLAG and the torch CUDA build were decided earlier (before the rsession
+# wrapper was written, so the CUDA choice could be exported into the R session).
+
 # Singularity forwards the host environment into the container, and this host
 # exports SSL_CERT_FILE=/etc/pki/... and SSL_CERT_DIR=/etc/pki/... -- RHEL paths
 # that do not exist inside the Ubuntu image. Anything doing TLS with OpenSSL
 # then fails; Quarto (Deno) dies with "Failed to load platform certificates".
 # Point them at the container's own CA bundle rather than using --cleanenv,
 # which would also strip SLURM_* and the RStudio variables we rely on.
-singularity exec -B "$TMPDIR:/tmp" \
+singularity exec ${NV_FLAG} -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/run:/run" \
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
  -B "$TMPDIR/local-share-rstudio:/home/rstudio/.local/share/rstudio" \

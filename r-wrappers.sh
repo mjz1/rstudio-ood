@@ -86,6 +86,33 @@ _r_libs_of() {
 _r_exec() {   # _r_exec <sif> <libs> <cmd> [args...]
     local sif="$1" libs="$2"; shift 2
     module purge
+
+    # GPU passthrough. Enable --nv only when Slurm GRANTED a GPU (its gres plugin
+    # sets CUDA_VISIBLE_DEVICES / SLURM_JOB_GPUS, e.g. inside `salloc
+    # --gres=gpu:1`). Not a /dev/nvidia* probe: a CPU job on a GPU-capable node
+    # sees those device files despite being granted no GPU, and probing them
+    # would let a CPU session grab a GPU allocated to someone else. --nv binds
+    # only the host driver; torch and friends bring their own CUDA toolkit.
+    local nv="" cuda_env=""
+    if [ -n "${CUDA_VISIBLE_DEVICES:-}" ] || [ -n "${SLURM_JOB_GPUS:-}" ] || [ -n "${GPU_DEVICE_ORDINAL:-}" ]; then
+        nv="--nv"
+        echo "GPU granted -> --nv" >&2
+        # Pick the torch CUDA build matching this node's driver (highest
+        # supported build <= nvidia-smi's max CUDA), rather than hardcoding one.
+        # Exported so torch::install_torch() fetches the GPU build; the image
+        # ships no CUDA toolkit, so torch would otherwise install CPU. Only the
+        # driver is needed at runtime -- the build bundles the toolkit.
+        local supported="${RSTUDIO_TORCH_CUDA:-12.9 12.8 12.6}" ceiling b
+        ceiling="$(nvidia-smi 2>/dev/null | grep -oE 'CUDA Version: [0-9]+\.[0-9]+' | grep -oE '[0-9]+\.[0-9]+' | head -1)"
+        if [ -n "$ceiling" ]; then
+            for b in $supported; do
+                if [ "$(printf '%s\n%s\n' "$b" "$ceiling" | sort -V | tail -1)" = "$ceiling" ]; then
+                    cuda_env="$b"; echo "R torch -> CUDA $b (driver up to $ceiling)" >&2; break
+                fi
+            done
+        fi
+    fi
+
     # This host exports SSL_CERT_FILE/SSL_CERT_DIR pointing at /etc/pki (RHEL),
     # and Singularity forwards them into the Ubuntu container where those paths
     # do not exist. OpenSSL-based TLS then fails -- Quarto (Deno) reports
@@ -94,7 +121,8 @@ _r_exec() {   # _r_exec <sif> <libs> <cmd> [args...]
     SINGULARITYENV_R_LIBS_USER="$libs" \
     SINGULARITYENV_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     SINGULARITYENV_SSL_CERT_DIR=/etc/ssl/certs \
-    singularity exec \
+    ${cuda_env:+SINGULARITYENV_CUDA="$cuda_env"} \
+    singularity exec ${nv} \
         -B "/data1:/data1" \
         -B "/run/munge/,/etc/slurm/,/usr/lib64/slurm,/usr/lib64/libmunge.so.2" \
         -B "$HOME:$HOME" \
