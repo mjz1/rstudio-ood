@@ -28,7 +28,16 @@ script:
   # `num_cores` above), NOT via `context` -- that is script.sh.erb's binding.
   # `num_gpus` may be a string or absent; coerce defensively.
   gpus = (defined?(num_gpus) ? num_gpus : 0).to_i
+
+  # Name the Slurm job after the session slot so concurrent sessions are
+  # distinguishable in `squeue`. Same precedence + sanitising as script.sh.erb.
+  raw = (defined?(new_session_name) ? new_session_name.to_s : '')
+  raw = session_name.to_s if raw.strip.empty? && defined?(session_name)
+  slot = raw.strip.gsub(/[^A-Za-z0-9._-]/, '_').sub(/\A\.+/, '')
+  slot = 'default' if slot.empty?
 -%>
+     - "--job-name"
+     - "rstudio-<%= slot %>"
 <%- if gpus > 0 -%>
      # Only emitted when GPUs > 0. The selected partition must be GPU-capable
      # and permit this account; see the queue dropdown. --nv is added later, at

@@ -91,6 +91,26 @@
     bits << "RStudio #{i['rstudio']}" if i['rstudio'] && i['rstudio'] != 'unknown'
     bits.join(' · ')
   end
+
+  # Named session "slots". Each slot has its own XDG_DATA_HOME/XDG_CACHE_HOME
+  # (script.sh.erb), so multiple sessions with different names run concurrently
+  # without colliding, and each slot's RStudio state persists across relaunches.
+  # Discover existing slots here so the form can offer them for resume, newest
+  # first, with a last-used hint from the directory mtime.
+  slots_root = File.join(Dir.home, '.rstudio-sessions')
+  ago = lambda do |t|
+    s = Time.now - t
+    next 'just now'          if s < 60
+    next "#{(s/60).to_i}m ago"   if s < 3600
+    next "#{(s/3600).to_i}h ago" if s < 86400
+    "#{(s/86400).to_i}d ago"
+  end
+  slot_opts = Dir.glob(File.join(slots_root, '*'))
+                 .select { |p| File.directory?(p) }
+                 .sort_by { |p| -File.mtime(p).to_i }
+                 .map { |p| ["#{File.basename(p)}  (last used #{ago.call(File.mtime(p))})", File.basename(p)] }
+  # Always offer "default", listed first if it is not already present.
+  slot_opts.unshift(['default', 'default']) unless slot_opts.any? { |_, v| v == 'default' }
 -%>
 
 cluster: "<%= cluster %>"
@@ -98,6 +118,20 @@ cluster: "<%= cluster %>"
 attributes:
   modules: ""
   extra_rstudio_args: ""
+
+  session_name:
+    widget: "select"
+    label: "Session"
+    help: "Resume a previous session, or pick 'default'. To start a fresh named session, type a name in 'New session name' below (it overrides this)."
+    options:
+<%- slot_opts.each do |label, value| -%>
+      - [ "<%= label %>", "<%= value %>" ]
+<%- end -%>
+  new_session_name:
+    widget: "text_field"
+    label: "New session name (optional)"
+    value: ""
+    help: "Give a fresh session its own name — its state persists and can be resumed later. Leave blank to use the Session picked above. Letters, digits, . _ - only."
 
   queue:
     widget: "select"
@@ -153,6 +187,8 @@ attributes:
 
 form:
   - modules
+  - session_name
+  - new_session_name
   - queue
   - num_cores
   - num_gpus

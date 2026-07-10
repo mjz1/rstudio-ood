@@ -103,6 +103,42 @@ inert: OnDemand reads `form.yml.erb`. If your OnDemand is too old to render
 `form.yml.erb`, the app will fail visibly — restore with
 `mv form.yml.bak form.yml`.
 
+## Multiple concurrent sessions
+
+You can run several RStudio sessions at once — one per project, say — and switch
+between them instantly instead of reloading. Each session is an independent
+`rserver` on its own node, so the only thing that used to make concurrent
+sessions collide was **shared RStudio state in `$HOME`** (`~/.local/share/rstudio`,
+the cache, and an abend-reset loop that rewrote *every* running session's state).
+
+Sessions are now isolated by a **named slot**:
+
+- The launch form has a **Session** dropdown listing your existing slots (newest
+  first, with a "last used" hint) — pick one to resume its state — plus a **New
+  session name** field to start a fresh named slot.
+- Each slot gets its own `XDG_DATA_HOME` and `XDG_CACHE_HOME` under
+  `~/.rstudio-sessions/<slot>/`, so concurrent sessions never touch each other's
+  open documents, console history, or session registry.
+- **Preferences are shared** (`XDG_CONFIG_HOME` stays `~/.config`), so themes,
+  keybindings, and settings are consistent across every session. Your R package
+  library is shared too.
+- Slot state **persists** on `$HOME`, so a slot resumes where you left it. The
+  Slurm job is named `rstudio-<slot>` so concurrent sessions are distinguishable
+  in `squeue`.
+
+Reconnecting to a session that is still **running** is done from OnDemand's *My
+Interactive Sessions* page (as always); the form's Session dropdown is for
+choosing which slot to **launch or resume**.
+
+Caveats:
+- **Do not open the same project in two slots at once** — RStudio locks a
+  project's `.Rproj.user`/`.RData`; one project per slot is the safe pattern
+  (and the point).
+- Installing packages from two sessions simultaneously can occasionally race on
+  the shared library directory.
+- Each session is a separate Slurm allocation, so N sessions use N jobs' worth of
+  cores/memory/GPU against your limits.
+
 ## GPU sessions
 
 To use a GPU:

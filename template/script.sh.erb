@@ -8,6 +8,17 @@
   r_minor = File.basename(image)[/(\d+\.\d+)/, 1]
   raise "cannot determine R version from image #{image}" if r_minor.nil?
 
+  # Named session slot. `new_session_name` (a fresh name typed by the user) wins
+  # over the `session_name` picked from the resume dropdown; else "default".
+  # Sanitised hard because it becomes a path component: keep only safe chars, and
+  # never allow empty or "." / "..".
+  raw_slot = (context.respond_to?(:new_session_name) ? context.new_session_name.to_s : '')
+  raw_slot = context.session_name.to_s if raw_slot.strip.empty? && context.respond_to?(:session_name)
+  # One path segment (no slashes survive), leading dots stripped so it is never a
+  # dotfile or "." / ".." -- so it cannot traverse out of ~/.rstudio-sessions.
+  slot = raw_slot.strip.gsub(/[^A-Za-z0-9._-]/, '_').sub(/\A\.+/, '')
+  slot = 'default' if slot.empty?
+
   # Same config file the form reads (written by install.sh); env wins if set.
   rsd_conf = lambda do
     path = ENV['RSTUDIO_DEV_CONFIG'] || File.join(Dir.home, '.config', 'rstudio_dev', 'config')
@@ -91,6 +102,17 @@ else
 fi
 # ------------------------------------------------------------------------------
 
+# Named session slot. Each slot gets its own XDG_DATA_HOME (RStudio session and
+# workspace state) and XDG_CACHE_HOME, so multiple sessions run concurrently
+# without stepping on each other's `~/.local/share/rstudio`. XDG_CONFIG_HOME is
+# left at its default (~/.config) so preferences/keybindings/themes stay shared.
+# The slot dir persists on $HOME, so a slot's state survives relaunch and can be
+# resumed from the form's Session dropdown.
+SESSION_SLOT="<%= slot %>"
+SLOT_DIR="${HOME}/.rstudio-sessions/${SESSION_SLOT}"
+mkdir -p "${SLOT_DIR}/data" "${SLOT_DIR}/cache"
+echo "RStudio session slot: ${SESSION_SLOT}  (state in ${SLOT_DIR})"
+
 # Generate an `rsession` wrapper script
 export RSESSION_WRAPPER_FILE="${PWD}/rsession.sh"
 (
@@ -102,7 +124,10 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # We fix the path and remove all the junk I had
   export PATH=/usr/lib/rstudio-server/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.local/host/bin:$PATH
 
-  export XDG_CACHE_HOME="${HOME}/work/.cache/"
+  # Per-slot state (RStudio reads session/workspace state from XDG_DATA_HOME) so
+  # concurrent sessions do not collide. XDG_CONFIG_HOME left default -> shared prefs.
+  export XDG_DATA_HOME="${SLOT_DIR}/data"
+  export XDG_CACHE_HOME="${SLOT_DIR}/cache"
 
   # torch: on a GPU job, use the CUDA build matching this node's driver (chosen
   # above). Empty on CPU jobs, so this line vanishes and torch stays CPU.
@@ -154,10 +179,11 @@ log-level=warn
 logger-type=stderr
 LOGCONF
 
-# Clear the "session did not exit cleanly" prompt from prior sessions.
-# The old `find ... -exec sed -i '{}' -e ... {} \;` passed the filename twice and
-# errored when the glob matched nothing; nullglob makes the empty case a no-op.
-RSTUDIO_STATE_DIR="${RSTUDIO_STATE_DIR:-${HOME}/work/.rstudio}"
+# Clear the "session did not exit cleanly" prompt for THIS slot only. Scoped to
+# the slot's own XDG_DATA_HOME (was ${HOME}/work/.rstudio, which is shared -- so
+# launching one session used to reset every other running session's abend flag).
+# RStudio keeps session state under $XDG_DATA_HOME/rstudio.
+RSTUDIO_STATE_DIR="${RSTUDIO_STATE_DIR:-${SLOT_DIR}/data/rstudio}"
 shopt -s nullglob
 for state in "${RSTUDIO_STATE_DIR}"/sessions/active/*/session-persistent-state; do
   sed -i -e 's/abend="1"/abend="0"/' "${state}"
