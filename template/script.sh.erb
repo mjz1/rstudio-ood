@@ -110,8 +110,8 @@ fi
 # resumed from the form's Session dropdown.
 SESSION_SLOT="<%= slot %>"
 SLOT_DIR="${HOME}/.rstudio-sessions/${SESSION_SLOT}"
-mkdir -p "${SLOT_DIR}/data" "${SLOT_DIR}/cache"
-echo "RStudio session slot: ${SESSION_SLOT}  (state in ${SLOT_DIR})"
+mkdir -p "${SLOT_DIR}/data" "${HOME}/work/.cache"
+echo "RStudio session slot: ${SESSION_SLOT}  (state in ${SLOT_DIR}/data; cache + renv shared)"
 
 # Generate an `rsession` wrapper script
 export RSESSION_WRAPPER_FILE="${PWD}/rsession.sh"
@@ -124,10 +124,14 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # We fix the path and remove all the junk I had
   export PATH=/usr/lib/rstudio-server/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.local/host/bin:$PATH
 
-  # Per-slot state (RStudio reads session/workspace state from XDG_DATA_HOME) so
-  # concurrent sessions do not collide. XDG_CONFIG_HOME left default -> shared prefs.
+  # Per-slot RStudio session/workspace state lives under XDG_DATA_HOME, so
+  # isolating it is what lets concurrent sessions coexist.
   export XDG_DATA_HOME="${SLOT_DIR}/data"
-  export XDG_CACHE_HOME="${SLOT_DIR}/cache"
+  # XDG_CACHE_HOME stays SHARED. renv stores its package library and cache under
+  # R_user_dir("renv","cache") == \$XDG_CACHE_HOME/R/renv -- so a per-slot cache
+  # moves every renv project's library out from under it (.libPaths breaks).
+  # XDG_CONFIG_HOME is likewise left at ~/.config so preferences stay shared.
+  export XDG_CACHE_HOME="${HOME}/work/.cache/"
 
   # torch: on a GPU job, use the CUDA build matching this node's driver (chosen
   # above). Empty on CPU jobs, so this line vanishes and torch stays CPU.
