@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
+<%-
+  # The package library is a function of the image, not an independent choice:
+  # packages built for one R minor version will not load under another. Deriving
+  # it here removes the old parallel `r_packages` dropdown, which could be set to
+  # a library that did not match -- or, as with R 4.4, did not exist at all.
+  image   = File.realpath(context.rstudio_image)
+  r_minor = File.basename(image)[/(\d+\.\d+)/, 1]
+  raise "cannot determine R version from image #{image}" if r_minor.nil?
+
+  r_libs_root = ENV.fetch('R_LIBS_ROOT', "#{ENV['HOME']}/work/R/x86_64-pc-linux-gnu-library")
+  r_libs      = File.join(r_libs_root, "#{r_minor}_singularity")
+-%>
 
 # Load the required environment
 setup_env () {
@@ -10,8 +22,14 @@ setup_env
 # Start RStudio Server
 #
 
-# Export path to library packages
-export R_LIBS_USER="<%= context.r_packages %>"
+# Package library for R <%= r_minor %>, derived from the selected image.
+# R silently ignores a missing R_LIBS_USER, so fail loudly instead.
+export R_LIBS_USER="<%= r_libs %>"
+if [[ ! -d "${R_LIBS_USER}" ]]; then
+  echo "R package library not found: ${R_LIBS_USER}" >&2
+  echo "Create it with: mkdir -p '${R_LIBS_USER}'" >&2
+  exit 1
+fi
 
 # PAM auth helper used by RStudio
 export RSTUDIO_AUTH="${PWD}/bin/auth"
@@ -29,7 +47,7 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # We fix the path and remove all the junk I had
   export PATH=/usr/lib/rstudio-server/bin/:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$HOME/.local/host/bin:$PATH
 
-  export XDG_CACHE_HOME="/home/zatzmanm/work/.cache/"
+  export XDG_CACHE_HOME="${HOME}/work/.cache/"
 
   # Log all output from this script
   export RSESSION_LOG_FILE="${PWD}/rsession.log"
@@ -56,8 +74,15 @@ export TMPDIR=`mktemp -d`
 
 mkdir -p $TMPDIR/{run,var-lib-rstudio-server,local-share-rstudio,usr}
 
-# fix rstudio active session error on start
-find /home/zatzmanm/work/.rstudio/sessions/active/*/session-persistent-state -type f -exec sed -i '{}' -e 's/abend="1"/abend="0"/' {} \;
+# Clear the "session did not exit cleanly" prompt from prior sessions.
+# The old `find ... -exec sed -i '{}' -e ... {} \;` passed the filename twice and
+# errored when the glob matched nothing; nullglob makes the empty case a no-op.
+RSTUDIO_STATE_DIR="${RSTUDIO_STATE_DIR:-${HOME}/work/.rstudio}"
+shopt -s nullglob
+for state in "${RSTUDIO_STATE_DIR}"/sessions/active/*/session-persistent-state; do
+  sed -i -e 's/abend="1"/abend="0"/' "${state}"
+done
+shopt -u nullglob
 
 set -x
 # Launch the RStudio Server
@@ -71,15 +96,15 @@ singularity exec -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/local-share-rstudio:/home/rstudio/.local/share/rstudio" \
  -B "/data1:/data1" \
  -B "/run/munge/,/etc/slurm/,/usr/lib64/slurm,/usr/lib64/libmunge.so.2" \
- -B "/home/zatzmanm:/home/zatzmanm" \
- "<%= context.rstudio_image %>" rserver \
+ -B "${HOME}:${HOME}" \
+ "<%= image %>" rserver \
  --server-user="${RSTUDIO_USER}" \
  --www-port="${port}" \
  --auth-none=0 \
  --auth-pam-require-password-prompt=0 \
  --auth-pam-helper-path="${RSTUDIO_AUTH}" \
  --auth-encrypt-password=0 \
- --auth-timeout-minutes=600 \
+ --auth-timeout-minutes=6000 \
  --rsession-path="${RSESSION_WRAPPER_FILE}"
 
 # note, rserver in the container will start with the user space environment defined on host

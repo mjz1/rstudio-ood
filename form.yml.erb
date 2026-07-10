@@ -1,0 +1,106 @@
+# Batch Connect app configuration file  (ERB-rendered)
+#
+# The RStudio image list is DISCOVERED, not hard-coded. Whatever
+# sync-images.sh has placed in the image directory shows up here, labelled with
+# the R / RStudio versions read out of that image at pull time (images.json).
+#
+# Consequences worth knowing:
+#   * Adding an R version upstream requires no edit to this file. Run
+#     `sync-images.sh --sync` and it appears in the dropdown.
+#   * A version is only offered if its per-user package library exists. This is
+#     what stops the app from handing you an R_LIBS_USER that points nowhere --
+#     R ignores a missing library path silently, so the failure was invisible.
+#   * There is no separate "R packages" dropdown any more. The library is a
+#     function of the image (packages built for one R minor will not load under
+#     another), so script.sh.erb derives it from the chosen image instead of
+#     letting the two be set independently.
+#
+# The image directory is the shared artifact. R_LIBS_ROOT is per-user: someone
+# reusing this app must point it at their own library root.
+---
+<%-
+  require 'json'
+
+  image_dir   = ENV.fetch('RSTUDIO_IMAGE_DIR', "#{ENV['HOME']}/work/images/rstudio")
+  r_libs_root = ENV.fetch('R_LIBS_ROOT',       "#{ENV['HOME']}/work/R/x86_64-pc-linux-gnu-library")
+
+  info = {}
+  manifest = File.join(image_dir, 'images.json')
+  if File.readable?(manifest)
+    begin
+      JSON.parse(File.read(manifest)).each { |e| info[e['r_version']] = e }
+    rescue JSON::ParserError
+      info = {}
+    end
+  end
+
+  # rstudio-<minor>.sif only. Legacy tag-named images (rstudio-v2.0.sif) are
+  # deliberately not matched: their filename does not state which R they carry.
+  versions = Dir.glob(File.join(image_dir, 'rstudio-*.sif'))
+                .map  { |p| File.basename(p)[/\Arstudio-(\d+\.\d+)\.sif\z/, 1] }
+                .compact
+                .select { |v| Dir.exist?(File.join(r_libs_root, "#{v}_singularity")) }
+                .sort_by { |v| v.split('.').map(&:to_i) }
+                .reverse
+
+  label_for = lambda do |v|
+    i = info[v]
+    next "R #{v}" unless i
+    bits = ["R #{i['r_full'] || v}"]
+    bits << "RStudio #{i['rstudio']}" if i['rstudio'] && i['rstudio'] != 'unknown'
+    bits.join(' · ')
+  end
+-%>
+
+cluster: "iris"
+
+attributes:
+  modules: ""
+  extra_rstudio_args: ""
+
+  queue:
+    label: "Queue"
+    value: "cpu"
+  num_cores:
+    widget: "number_field"
+    label: "Number of cores"
+    value: 8
+    help: "Maximum number of CPU cores is 72"
+    min: 1
+    step: 1
+  num_hours:
+    widget: "number_field"
+    label: "Number of hours"
+    value: 8
+    min: 1
+    step: 1
+    help: "Time in hours"
+  memory:
+    widget: "number_field"
+    label: "Memory"
+    value: 8
+    min: 8
+    step: 1
+
+  rstudio_image:
+    widget: "select"
+    label: "RStudio image"
+<%- if versions.empty? -%>
+    help: "NO IMAGES FOUND in <%= image_dir %> with a matching package library in <%= r_libs_root %>. Run sync-images.sh --sync"
+    options:
+      - [ "none available", "" ]
+<%- else -%>
+    help: "R package library is selected automatically to match. Run sync-images.sh to update this list."
+    options:
+<%- versions.each do |v| -%>
+      - [ "<%= label_for.call(v) %>", "<%= File.join(image_dir, "rstudio-#{v}.sif") %>" ]
+<%- end -%>
+<%- end -%>
+
+form:
+  - modules
+  - queue
+  - num_cores
+  - num_hours
+  - memory
+  - rstudio_image
