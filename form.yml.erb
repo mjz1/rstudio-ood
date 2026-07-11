@@ -105,10 +105,32 @@
     next "#{(s/3600).to_i}h ago" if s < 86400
     "#{(s/86400).to_i}d ago"
   end
+  # Best-effort: which slots have a live rserver job right now? submit.yml.erb
+  # names each job `rstudio-<slot>` (same sanitising), so squeue reveals them.
+  # This is purely advisory and wrapped defensively: the PUN may not have squeue
+  # on PATH (it does not reliably source your shell rc), so any failure must
+  # yield "no annotation", never a broken form.
+  running = {}
+  begin
+    user = ENV['USER'].to_s[/\A[\w.-]+\z/]
+    if user
+      `squeue -h -u #{user} -o '%j' 2>/dev/null`.each_line do |line|
+        running[$1] = true if line.strip =~ /\Arstudio-(.+)\z/
+      end
+    end
+  rescue StandardError
+    running = {}
+  end
+
+  # Running slots sort first (running before idle), then most-recently-used.
   slot_opts = Dir.glob(File.join(slots_root, '*'))
                  .select { |p| File.directory?(p) }
-                 .sort_by { |p| -File.mtime(p).to_i }
-                 .map { |p| ["#{File.basename(p)}  (last used #{ago.call(File.mtime(p))})", File.basename(p)] }
+                 .sort_by { |p| [running[File.basename(p)] ? 0 : 1, -File.mtime(p).to_i] }
+                 .map do |p|
+    name = File.basename(p)
+    hint = running[name] ? 'running now' : "last used #{ago.call(File.mtime(p))}"
+    ["#{name}  (#{hint})", name]
+  end
   # Always offer "default", listed first if it is not already present.
   slot_opts.unshift(['default', 'default']) unless slot_opts.any? { |_, v| v == 'default' }
 -%>
