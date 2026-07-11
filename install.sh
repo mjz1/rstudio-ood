@@ -356,11 +356,6 @@ RSTUDIO_QUEUES=$QUEUES_OUT
 # Partition that sync-images.sh submits image pulls to. The pull is ~4 GB plus a
 # squashfs build, so it does not belong on a login node.
 RSTUDIO_SYNC_PARTITION=$SYNC_PARTITION
-
-# Where the automated monthly sync (sync-images.sbatch) mails its summary. Leave
-# blank to skip email (runs still log under ~/work/.rstudio-img-sync). Bootstrap
-# the schedule once with: RSTUDIO_SYNC_EMAIL=... bash $APP_DIR/sync-images.sbatch
-RSTUDIO_SYNC_EMAIL=
 EOF
     chmod 0644 "$CONFIG_PATH"
 fi
