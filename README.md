@@ -1,14 +1,61 @@
 # RStudio Server (Open OnDemand)
 
-Batch Connect app that launches RStudio Server inside a Singularity container on
-a compute node of the `iris` cluster.
+An Open OnDemand app that runs RStudio Server inside a Singularity container on a
+Slurm compute node. Multiple named sessions, GPU support, and one shared set of
+container images that a whole lab can read.
+
+Nothing is hard-coded to one person, lab or cluster: the installer asks where
+things go and discovers the rest from the machine it runs on.
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash
+```
+
+That's it. It runs an interview (reading your answers from the terminal even
+though the script arrives over a pipe) and then prints your next steps.
+
+Want to look before you leap — this changes nothing at all:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --dry-run
+```
+
+The installer asks you **three questions that matter** and works the rest out for
+itself:
+
+- **Where do the big directories go?** Container images, your R libraries, and
+  session state + caches. It proposes large storage it found (`~/work`,
+  `$SCRATCH`, `/data1/*/users/$USER`) and **warns you off your home directory**,
+  which is small, quota'd, and shared.
+- **Do you maintain the images, or use someone else's?** Point it at a
+  colleague's image directory and you never sync anything. Images are identical
+  for everyone, so one person can keep them current for a whole lab.
+- **Which rc file** gets the shell wrappers (`R_`, `Rscript_`, `bash_`).
+
+Everything else is discovered: your Slurm partitions (from the partition ACLs —
+it only offers queues your account may actually submit to, labelled with GPU type
+and time limit), the cluster id, the container runtime, and which filesystems
+need binding into the container.
+
+Then:
+
+```bash
+sync-images.sh --sync    # pull the images (a Slurm job; skip if you're a consumer)
+```
+
+and open **Interactive Apps → RStudio Server** in OnDemand.
+
+See [Install in detail](#install-in-detail) for every option, what it touches,
+how to share images across a lab, and how to uninstall.
+
+## How the pieces fit
 
 The container images are built and published by
 [mjz1/rstudio-img](https://github.com/mjz1/rstudio-img) to Docker Hub
 (`zatzmanm/rstudio`) and GHCR (`ghcr.io/mjz1/rstudio-img`). Nothing in this app
 builds images; it only consumes them.
-
-## How the pieces fit
 
 ```
   rstudio-img (GitHub Actions)         registry              this cluster
@@ -292,32 +339,38 @@ This separation exists because the repo *used to be* the sandbox directory:
 instantly live. If you find yourself editing files under `~/ondemand/`, you are
 editing production — `install.sh` warns if you run it from there.
 
-## Reusing this setup
-
-Nothing in this app is hard-coded to one person, lab or cluster. `install.sh`
-asks you where things go and discovers the rest from the machine it runs on: the
-mount table tells it which storage is large, and Slurm's partition ACLs tell it
-which queues *your* account may actually submit to.
-
-Install straight from the internet — no checkout needed:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash
-```
-
-That runs the interview (it reads your answers from the terminal even though the
-script arrives over the pipe). `--dry-run` shows exactly what it would do and
-changes nothing; `--yes` accepts every discovered default without asking.
-
-Or from a checkout:
+## Install in detail
 
 ```bash
 git clone https://github.com/mjz1/rstudio-ood.git
 cd rstudio-ood
-./install.sh --dry-run   # see the plan
-./install.sh             # interactive
+./install.sh --dry-run   # print the plan, change nothing
+./install.sh             # the interview
+./install.sh --yes       # accept every discovered default, ask nothing
 ./install.sh --help      # every option
 ```
+
+The `curl | bash` one-liner and a checkout run the same script — the one-liner
+just fetches the repo into a temp directory first.
+
+### Trying it safely
+
+`--dry-run` is the honest preview: it prints the config it would write and every
+directory it would create, and touches nothing. To go further and run it *for
+real* without disturbing an existing setup, redirect the config and every path it
+writes into a scratch directory:
+
+```bash
+T=$(mktemp -d)
+RSTUDIO_DEV_CONFIG=$T/config ./install.sh \
+    --storage-root  $T/storage \
+    --app-dir       $T/app \
+    --shell-init    none        # don't touch any rc file
+```
+
+That exercises the whole thing — discovery, the interview, the config file, the
+deployed app — against `$T`, leaving your real `~/.config/rstudio_dev/config`,
+your OnDemand app and your `~/.bashrc` alone. `rm -rf $T` when you're done.
 
 ### What it asks you
 
