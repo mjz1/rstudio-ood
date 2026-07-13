@@ -1,11 +1,22 @@
 # RStudio Server (Open OnDemand)
 
 An Open OnDemand app that runs RStudio Server inside a Singularity container on a
-Slurm compute node. Multiple named sessions, GPU support, and one shared set of
-container images that a whole lab can read.
+Slurm compute node.
 
-Nothing is hard-coded to one person, lab or cluster: the installer asks where
-things go and discovers the rest from the machine it runs on.
+- **One-line install** — an interview that discovers your storage and your
+  Slurm partitions; nothing is hard-coded to one person, lab, or cluster.
+- **Current R and RStudio** — images (R 4.3–4.6) rebuilt monthly upstream;
+  one command syncs them, and rollback to the previous build is a rename.
+- **Named concurrent sessions** — one per project, each resuming its own state;
+  labelled in the form, in `squeue`, and on the session card.
+- **Lab-shared images** — one person maintains them, everyone else reads them;
+  the shared directory is discovered automatically.
+- **Per-version package libraries** — the R library is derived from the chosen
+  image, so your installed packages can never silently vanish.
+- **GPU sessions** *(experimental)* — pick a GPU queue, set GPUs > 0, and
+  R `torch` is pointed at the right CUDA build for the node automatically.
+- **Terminal wrappers** — `R_`, `Rscript_`, `bash_` run the same images and
+  libraries outside OnDemand.
 
 > **Already have R packages on this cluster?** They usually carry over with one
 > command — but *which* command depends on how they were built, and copying the
