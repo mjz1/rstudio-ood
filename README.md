@@ -328,11 +328,46 @@ fallback to a different R's library.
 `--app-only` deliberately skips the interview: redeploying an edit must not be
 able to change your storage or partitions behind your back.
 
-**Test on the staging app.** There is no ruby anywhere on the cluster, so
-`form.yml.erb` and `template/script.sh.erb` cannot be executed locally — CI lints
-their ruby *syntax*, and everything else is unverified until someone clicks
-Launch. Deploying a second copy under a different name gives you somewhere to
-click Launch that isn't the app other people are using.
+### Testing the ERB templates
+
+The templates are the riskiest files in the app: OnDemand renders them inside the
+PUN, and a mistake in them is not a stack trace but a session that will not start.
+Run the suite before you deploy:
+
+```bash
+./test/run.sh
+```
+
+```
+form.yml.erb
+  ok   DROPS R 4.4: it has an image but no library (a silent R_LIBS_USER loss)
+  ok   a "·" inside a label does not split the entry (commas are the delimiter)
+template/script.sh.erb
+  ok   R_LIBS_USER is derived from the SELECTED image (4.5 image -> 4.5 library)
+  ok   a traversal in the session name is sanitised to one path segment
+  ok   GPU: --nv is gated on Slurm granting a GPU, never on /dev/nvidia*
+submit.yml.erb
+  ok   CPU job: no --gres is emitted
+  ...
+28 passed, 0 failed
+```
+
+It builds a fixture cluster in a temp directory (images, package libraries,
+config), reproduces OnDemand's binding — `context` for `script.sh.erb`, bare
+locals for `submit.yml.erb` — renders every template, and asserts on the result.
+It then bash-parses the job script the template generates, *and* the rsession
+wrapper that script writes as a heredoc. Nothing real is touched.
+
+**"There is no ruby on the cluster" turned out not to be a limit.** This app
+already depends on a container runtime; ruby is a 40 MB image and three seconds
+away. `test/run.sh` uses the host's ruby if it has one (GitHub Actions does) and
+otherwise pulls a container, once. Same tests either way, and CI runs exactly the
+same script.
+
+What the suite still cannot catch: OnDemand-specific binding differences, and
+anything that only shows up against real Slurm. So: **test on the staging app**.
+Deploying a second copy under a different name gives you somewhere to click
+Launch that isn't the app other people are using.
 
 This separation exists because the repo *used to be* the sandbox directory:
 `~/ondemand/dev` was the git checkout, so every edit, branch switch and stash was

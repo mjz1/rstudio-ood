@@ -32,10 +32,23 @@ directory). This repo is the **source**; the app directory is a **deploy target*
 ## Ground truth about this environment
 
 - **The portal is not this machine.** OnDemand renders the ERB templates inside
-  the PUN, on the web node. `ruby` is not installed anywhere on the cluster, so
-  `form.yml.erb` and `template/script.sh.erb` **cannot be executed locally**. CI
-  lints their ruby *syntax*; everything else is unverified until someone clicks
-  Launch. Test on the staging app, not the stable one.
+  the PUN, on the web node, and `ruby` is not installed anywhere on the cluster.
+  That was treated as a hard limit for a long time -- it is not. **`test/run.sh`
+  renders the templates and asserts on the output**, supplying ruby from a 40 MB
+  container when the host has none (we already depend on a container runtime).
+  Run it before every deploy.
+  - It builds a fixture cluster in `$TMPDIR` (images, libraries, config) and
+    reproduces OnDemand's binding: `context` for `script.sh.erb`, bare locals for
+    `submit.yml.erb`. It then bash-parses the job script the template generates,
+    *and* the rsession wrapper that script writes as a heredoc.
+  - The suite must be **hermetic**. `ENV[key] || config[key] || default` means any
+    exported `RSTUDIO_*` shadows the fixture, so the tests would silently read the
+    developer's own cluster and pass for the wrong reasons. `erb_test.rb` scrubs
+    `RSTUDIO_*`/`R_LIBS_*` from `ENV` before rendering, and `run.sh` reads
+    `conf.sh` in a subshell so it cannot export anything. Do not undo either.
+  - What it still cannot catch: OnDemand-specific binding differences and
+    anything that needs real Slurm. **Test on the staging app** (`rstudio_next`),
+    not the one your lab uses.
 - The PUN does not reliably source your shell rc, so **environment variables do
   not reach the ERB templates**. Configuration lives in
   `~/.config/rstudio_dev/config`, written by `install.sh` and read by all four

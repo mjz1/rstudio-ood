@@ -1,19 +1,27 @@
-name: Lint ERB templates
+name: ERB templates
 
 # The ERB templates (form.yml.erb, submit.yml.erb, template/script.sh.erb) are
-# rendered by Open OnDemand inside the PUN, and there is no ruby on the cluster,
-# so they cannot be checked locally -- every change is unverified until someone
-# clicks Launch, and a ruby syntax error there just makes a session fail to
-# start. This job compiles the ruby that each template generates and fails on a
-# SyntaxError, turning "unverifiable until launch" into "at least syntactically
-# validated on every push".
+# rendered by Open OnDemand inside the PUN. A mistake in them is not a stack
+# trace, it is a session that fails to launch -- so they are simultaneously the
+# riskiest files here and, for a long time, the only untested ones.
 #
-# Scope and limits (deliberate): this checks the RUBY embedded in <% %>/<%= %>
-# blocks for *syntax* only. It does NOT execute the template, so it cannot catch
-# undefined methods/variables (e.g. context.foo being nil), OnDemand-specific
-# binding differences, or logic bugs -- those still need a launch. Syntax is the
-# cheapest and scariest class (a stray `end`, an unclosed tag), and is exactly
-# what shipped the num_gpus-on-nil crash's cousins.
+# This job runs the same suite as `test/run.sh` does locally: it renders every
+# template against a fixture cluster (images, libraries, config -- all in a temp
+# dir), reproduces OnDemand's binding (`context` for script.sh.erb, bare locals
+# for submit.yml.erb), and asserts on the output. It also bash-parses the job
+# script the template generates, and the rsession wrapper that script writes.
+#
+# This job used to compile the templates' ruby and stop there, which catches a
+# stray `end` and nothing else -- not a nil method call, not a wrong path, not a
+# bind that vanished, not a GPU flag emitted for a CPU job. The compile check is
+# kept below as a backstop for the ERBs the suite does not render.
+#
+# Locally the same script supplies ruby from a container, because the cluster has
+# none. Here the runner already has ruby, so it is used directly. Same tests.
+#
+# What this still cannot catch: OnDemand-specific binding differences, and
+# anything that only shows up against a real Slurm. Test on the staging app
+# (rstudio_next) before deploying to rstudio_dev.
 
 on:
   pull_request:
@@ -22,21 +30,25 @@ on:
   workflow_dispatch:
 
 jobs:
-  erb-syntax:
-    name: ERB templates parse
+  erb:
+    name: Render and check
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      # ubuntu-latest ships ruby with ERB as a default gem; no setup needed.
-      - name: Compile each ERB template's ruby
+      # ubuntu-latest ships ruby; ERB, YAML and JSON are all default gems.
+      - name: Show ruby
+        run: ruby --version
+
+      - name: Render templates and assert
+        run: ./test/run.sh
+
+      # Backstop: every ERB in the repo must at least compile, including the ones
+      # the suite does not render (view.html.erb, template/before.sh.erb, after.sh.erb).
+      - name: Every ERB compiles
         run: |
           set -uo pipefail
-          ruby --version
           fail=0
-          shopt -s nullglob
-          # trim_mode "-" matches OnDemand's <%- ... -%> tags. Compiling the
-          # generated source raises SyntaxError on a malformed template.
           for f in $(git ls-files '*.erb'); do
             if ruby -rerb -e \
               'RubyVM::InstructionSequence.compile(ERB.new(File.read(ARGV[0]), trim_mode: "-").src)' \
@@ -48,7 +60,4 @@ jobs:
               fail=1
             fi
           done
-          if [ "$fail" -ne 0 ]; then
-            echo "::error::One or more ERB templates have a ruby syntax error."
-          fi
           exit $fail
