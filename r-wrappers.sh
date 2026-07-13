@@ -85,7 +85,10 @@ _r_libs_of() {
 
 _r_exec() {   # _r_exec <sif> <libs> <cmd> [args...]
     local sif="$1" libs="$2"; shift 2
-    module purge
+    # Loaded modules can leak conflicting libraries into the container env.
+    # Guarded: not every site has environment modules, and a non-login shell
+    # may not have the `module` function even where the site does.
+    if command -v module >/dev/null 2>&1; then module purge; fi
 
     # GPU passthrough. Enable --nv only when Slurm GRANTED a GPU (its gres plugin
     # sets CUDA_VISIBLE_DEVICES / SLURM_JOB_GPUS, e.g. inside `salloc

@@ -385,6 +385,22 @@ cd rstudio-ood
 ./install.sh --help      # every option
 ```
 
+### Requirements
+
+- **Singularity or Apptainer** on the login and compute nodes (the installer
+  detects which and records it).
+- **OnDemand app development ("sandbox apps") enabled for your account.** The
+  app installs into `~/ondemand/dev/`, which the portal only reads when your
+  site has turned that on. The switch lives on the web node, so the installer
+  cannot check it — if the app never appears under Interactive Apps, this is
+  the first thing to ask your OnDemand admins about.
+- **bash**, for the shell wrappers (`R_`, `Rscript_`, `bash_` are bash
+  functions). If your login shell is zsh the installer says so and skips the
+  rc-file step rather than breaking your startup; the OnDemand app itself does
+  not care what your shell is.
+- `python3` (any 3.6+) and standard GNU userland — true of effectively every
+  Linux cluster.
+
 The `curl | bash` one-liner and a checkout run the same script — the one-liner
 just fetches the repo into a temp directory first.
 
@@ -463,8 +479,15 @@ sync-images.sh --sync
 
 Group read is not enough on its own: every parent directory of the image
 directory also needs `g+x`, or your labmates can see the path and still not open
-anything in it. `install.sh --share-images` checks the whole chain and tells you
-which directories block it.
+anything in it. `install.sh --share-images` opens the directory *and everything
+already in it* (`chmod -R g+rX`), then checks the whole parent chain and names
+any directory that still blocks group traversal.
+
+The maintainer's umask cannot break consumers either: `sync-images.sh` sets the
+mode of every `.sif`, `.digest`, `.info` and `images.json` explicitly, so a
+maintainer with `umask 077` still publishes group-readable metadata. (Before
+this, such a maintainer's pulls quietly degraded every consumer's form — no
+version labels, every image reported `UNKNOWN`.)
 
 ### Another cluster, different partitions
 

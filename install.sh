@@ -169,6 +169,10 @@ pick_storage_root() {
     for c in "${RSTUDIO_WORK_DIR:-}" "$HOME/work" "$HOME/scratch" "${SCRATCH:-}" \
              "/scratch/$USER" /data1/*/users/"$USER" /data/*/users/"$USER"; do
         [[ -n $c && -d $c ]] || continue
+        # Writable, not merely present: a user who belongs to two unix groups can
+        # glob a directory named after them in a tree they cannot write, and a
+        # read-only "storage root" fails at the first mkdir, halfway through.
+        [[ -w $c ]] || continue
         on_home_fs "$c" && continue
         printf '%s' "$(readlink -f "$c")"; return 0
     done
@@ -186,6 +190,13 @@ ask_big_dir() {  # ask_big_dir <label> <what-grows-here> <prompt> <default>
         ans="$(ask "$prompt" "$default")"
         ans="${ans/#\~/$HOME}"
         [[ $ans == /* ]] || { say "  Please give an absolute path."; continue; }
+        # Creating this path must be possible: check the nearest existing
+        # ancestor now, in the prompt, rather than failing at mkdir long after
+        # the questions are over.
+        if [[ ! -e $ans && ! -w "$(_nearest_existing "$ans")" ]]; then
+            warn "cannot create $ans: no write access to $(_nearest_existing "$ans")"
+            interactive && continue
+        fi
         if on_home_fs "$ans"; then
             blank
             warn "$ans is on your HOME filesystem ($(_fs_of "$ans"): $(_avail_of "$ans") free of $(_total_of "$ans"))."
@@ -523,6 +534,11 @@ fi
 ALLOWED_LIST=""
 if _slurm_probe; then
     ALLOWED_LIST="$(allowed_partitions)"
+    # Some sites restrict sacctmgr; without associations the account-level ACLs
+    # (AllowAccounts/DenyAccounts) cannot be applied and the list degrades to
+    # every UP partition the user's groups allow. Say so -- otherwise the first
+    # sign is a job rejected at submit time.
+    [[ -n $MY_ACCOUNTS ]] || warn "could not read your Slurm associations (sacctmgr); the partition list is not filtered by account -- trim --queues to what you can actually use"
 else
     warn "Slurm is not reachable from here; partitions cannot be discovered."
     warn "Pass --queue/--queues/--sync-partition explicitly, or edit the config afterwards."
@@ -771,6 +787,20 @@ if (( HOME_FS_HITS )); then
     warn "Re-run with --storage-root /path/to/large/storage to move these off it."
 fi
 
+# Creatability, checked here rather than only in the interactive prompt, because
+# --yes and flag-supplied paths never pass through the prompt at all. Dying now,
+# before the plan, beats a mkdir failure halfway through the install. (The image
+# dir is exempt when it already exists read-only: that is the consumer case.)
+for spec in "R library root:$R_LIBS_ROOT" "work directory:$WORK_DIR"; do
+    p="${spec#*:}"
+    if [[ ! -e $p && ! -w "$(_nearest_existing "$p")" ]]; then
+        die "cannot create ${spec%%:*} $p: no write access to $(_nearest_existing "$p")"
+    fi
+done
+if [[ $SYNC_ROLE == maintainer && ! -e $IMAGE_DIR && ! -w "$(_nearest_existing "$IMAGE_DIR")" ]]; then
+    die "cannot create image directory $IMAGE_DIR: no write access to $(_nearest_existing "$IMAGE_DIR")"
+fi
+
 # ----------------------------------------------------------------------- plan --
 
 QUEUES_OUT="$(_enrich_queues "$QUEUES")"
@@ -837,9 +867,13 @@ if [[ $SYNC_ROLE == maintainer ]]; then
         info "exists   $IMAGE_DIR"
     fi
     if [[ $SHARE_IMAGES == yes ]]; then
-        info "chmod    g+rx $IMAGE_DIR"
-        dry || chmod g+rx "$IMAGE_DIR" 2>/dev/null \
-            || warn "could not chmod $IMAGE_DIR"
+        # Recursive, and g+rX (capital X: execute only where something already
+        # executes): images pulled before this run -- or written under a
+        # restrictive umask -- are sitting there group-unreadable, and opening
+        # just the directory would share an empty-looking room.
+        info "chmod    -R g+rX $IMAGE_DIR"
+        dry || chmod -R g+rX "$IMAGE_DIR" 2>/dev/null \
+            || warn "could not chmod everything in $IMAGE_DIR"
         blocked="$(group_blocked_ancestors "$IMAGE_DIR")"
         if [[ -n $blocked ]]; then
             warn "your group still cannot reach it: these parent directories deny group access:"
@@ -937,10 +971,22 @@ echo "  r-wrappers.sh gives you R_ / Rscript_ / bash_ / sync_images: the same im
 echo "  and libraries as the OnDemand app, from a terminal."
 SRC_LINE="source \"$APP_DIR/r-wrappers.sh\""
 if [[ -z $SHELL_INIT ]]; then
+    # The wrappers are bash functions (BASH_SOURCE, mapfile, printf -v), so the
+    # only rc file worth offering is a bash one. For a non-bash login shell the
+    # honest default is to skip: appending to .bashrc would "succeed" and never
+    # take effect, and appending to .zshrc would break zsh startup -- both worse
+    # than saying so.
+    case "${SHELL:-/bin/bash}" in
+        */bash|*/sh) _rc_default="$HOME/.bashrc" ;;
+        *)  _rc_default="none"
+            warn "your login shell is ${SHELL##*/}; r-wrappers.sh is bash-only."
+            warn "Skipping shell setup -- run 'bash' first, or source it from a bash rc file."
+            ;;
+    esac
     if interactive; then
-        SHELL_INIT="$(ask "Add the source line to which rc file? ('none' to skip)" "$HOME/.bashrc")"
+        SHELL_INIT="$(ask "Add the source line to which rc file? ('none' to skip)" "$_rc_default")"
     else
-        SHELL_INIT="$HOME/.bashrc"
+        SHELL_INIT="$_rc_default"
     fi
 fi
 SHELL_INIT="${SHELL_INIT/#\~/$HOME}"
@@ -986,6 +1032,14 @@ fi
     && echo "  2. Source the wrappers:  $SRC_LINE" \
     || echo "  2. Reload your shell:    source $SHELL_INIT"
 echo "  3. Open OnDemand -> Interactive Apps -> RStudio Server"
+if [[ $APP_DIR == "$HOME/ondemand/dev/"* ]]; then
+    echo
+    echo "  If the app does NOT appear in the portal: ~/ondemand/dev is OnDemand's"
+    echo "  per-user 'sandbox app' directory, and sites must enable app development"
+    echo "  for your account before the portal reads it. That switch lives on the"
+    echo "  web node, so it cannot be checked from here -- ask your OnDemand admins"
+    echo "  for 'app development / sandbox apps' if the app is missing."
+fi
 echo
 echo "  Your R libraries start empty. Install packages from inside RStudio, or:"
 echo "      Rscript_ -e 'install.packages(\"data.table\")'"

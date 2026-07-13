@@ -157,6 +157,12 @@ pull_one() { # pull_one <ver> <digest> <repo-ref>
     chmod 0755 "$target"
     printf '%s\n' "$digest" >"$target.digest"
     write_info "$ver" "$digest" "$ref" "$r_full" "$rstudio" "$quarto"
+    # The .sif is chmod'd explicitly, but the sidecars inherit the maintainer's
+    # umask -- and under umask 077 they come out group-unreadable, which quietly
+    # breaks every CONSUMER: their form loses its version labels and their check
+    # reports every image UNKNOWN. Sidecars exist to be read by people who are
+    # not the maintainer, so their mode must not depend on who ran the pull.
+    chmod 0644 "$target.digest" "$target.info" 2>/dev/null || true
 
     log "    installed R $r_full, RStudio $rstudio, Quarto $quarto"
 }
@@ -184,6 +190,7 @@ with open(out, "w") as fh:
     fh.write("\n")
 print(f"wrote {out} ({len(entries)} images)", file=sys.stderr)
 PY
+    chmod 0644 "$MANIFEST" 2>/dev/null || true   # same umask reasoning as the sidecars
 }
 
 # --- commands -----------------------------------------------------------------
