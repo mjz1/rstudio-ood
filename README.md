@@ -7,6 +7,12 @@ container images that a whole lab can read.
 Nothing is hard-coded to one person, lab or cluster: the installer asks where
 things go and discovers the rest from the machine it runs on.
 
+> **Already have R packages on this cluster?** They usually carry over with one
+> command — but *which* command depends on how they were built, and copying the
+> wrong kind breaks quietly. See
+> **[Migrating existing R libraries](docs/install.md#migrating-existing-r-libraries)**
+> before your first session.
+
 ## Install
 
 ```bash
