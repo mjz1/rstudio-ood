@@ -103,13 +103,47 @@ DRY_RUN=0
 DO_LINK=0
 CONTAINER_CMD=""
 
-die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
-warn() { printf '\033[33mwarn:\033[0m %s\n' "$*" >&2; }
+# ------------------------------------------------------------------ ui kit --
+#
+# Colour and glyphs, degrading to plain text wherever a human is not watching a
+# terminal: stderr not a TTY (piped, CI, logs), NO_COLOR set, or TERM=dumb.
+# Glyphs additionally require a UTF-8 locale; otherwise ASCII stand-ins. The
+# OUTPUT is decoration only -- every message prints the same words either way,
+# so logs stay grep-able.
+_ui_tty=0
+[[ -t 2 && -z ${NO_COLOR:-} && ${TERM:-} != dumb ]] && _ui_tty=1
+if (( _ui_tty )); then
+    C_R=$'\033[0m'  C_B=$'\033[1m'  C_DIM=$'\033[2m'
+    C_HDR=$'\033[1;36m'  C_OK=$'\033[32m'  C_WARN=$'\033[33m'  C_ERR=$'\033[31m'
+else
+    C_R='' C_B='' C_DIM='' C_HDR='' C_OK='' C_WARN='' C_ERR=''
+fi
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+    *[Uu][Tt][Ff]*8*) G_OK='✓' G_BAD='✗' G_WARN='!' G_RULE='─' G_DOT='·' ;;
+    *)                G_OK='ok' G_BAD='x' G_WARN='!' G_RULE='-' G_DOT='/' ;;
+esac
+
+die()  { printf '%serror:%s %s\n' "$C_ERR" "$C_R" "$*" >&2; exit 1; }
+warn() { printf '%s%s warn:%s %s\n' "$C_WARN" "$G_WARN" "$C_R" "$*" >&2; }
 info() { printf '  %s\n' "$*"; }
-head2(){ printf '\n%s\n%s\n' "$1" "$(printf '%*s' "${#1}" '' | tr ' ' -)"; }
+ok()   { printf '  %s%s%s %s\n' "$C_OK" "$G_OK" "$C_R" "$*"; }
+note() { printf '  %s%s%s\n' "$C_DIM" "$*" "$C_R"; }
+
+# Step header: "── Step 2 of 5 · Storage ──────". Plain-dash rule when not a TTY.
+# The rule is built by repetition, NOT `tr ' ' "$G_RULE"`: tr is byte-wise and
+# shreds a multibyte glyph into mojibake.
+UI_STEPS=5
+_rule() { local n="$1" out="" i; for ((i=0;i<n;i++)); do out+="$G_RULE"; done; printf '%s' "$out"; }
+step() {  # step <n> <title>
+    printf '\n%s%s%s Step %s of %s %s %s %s%s\n' \
+        "$C_HDR" "$(_rule 2)" "$C_R$C_B" "$1" "$UI_STEPS" "$G_DOT" "$2" "$C_R$C_DIM$(_rule 40)" "$C_R"
+}
+head2(){ printf '\n%s%s%s\n' "$C_B" "$1" "$C_R"; }
+
 # say/note write to STDERR so they can be used inside functions whose stdout is
 # captured by a command substitution (the interview helpers below).
 say()  { printf '  %s\n' "$*" >&2; }
+dimsay(){ printf '  %s%s%s\n' "$C_DIM" "$*" "$C_R" >&2; }
 blank(){ printf '\n' >&2; }
 
 dry() { (( DRY_RUN )); }
@@ -126,11 +160,24 @@ interactive() {
     [[ -e /dev/tty ]] && (exec </dev/tty) 2>/dev/null
 }
 
-ask() {  # ask <prompt> <default> -> echoes answer on stdout
-    local prompt="$1" default="$2" reply
+ask() {  # ask <prompt> <default> [detail] -> echoes answer on stdout
+    # The third argument is shown when the user answers `?`. This is where the
+    # explanatory prose lives now: behind the question, not in front of it --
+    # available to whoever wants it, invisible to whoever does not.
+    local prompt="$1" default="$2" detail="${3:-}" reply
     if ! interactive; then printf '%s' "$default"; return; fi
-    read -r -p "  $prompt [$default]: " reply </dev/tty
-    printf '%s' "${reply:-$default}"
+    while :; do
+        read -r -p "  $prompt [$default]: " reply </dev/tty
+        if [[ $reply == '?' ]]; then
+            if [[ -n $detail ]]; then
+                printf '%s' "$detail" | sed "s/^/    ${C_DIM}/; s/\$/${C_R}/" >&2
+            else
+                dimsay "(no further detail for this one)"
+            fi
+            continue
+        fi
+        printf '%s' "${reply:-$default}"; return
+    done
 }
 
 confirm() {  # confirm <prompt> <Y|N default> -> exit status
@@ -182,15 +229,13 @@ pick_storage_root() {
     printf '%s' "$HOME"
 }
 
-# Prompt for a directory that will get big, explaining what lands there and how
-# much it costs, and pushing back if the answer is on the home filesystem.
+# Prompt for a directory that will get big. The what-and-how-much explanation
+# sits behind `?` rather than being printed up front, and the home-filesystem
+# pushback only appears when it applies.
 ask_big_dir() {  # ask_big_dir <label> <what-grows-here> <prompt> <default>
     local label="$1" grows="$2" prompt="$3" default="$4" ans
-    blank
-    say "$label"
-    say "  $grows"
     while :; do
-        ans="$(ask "$prompt" "$default")"
+        ans="$(ask "$prompt" "$default" "$label"$'\n'"$grows")"
         ans="${ans/#\~/$HOME}"
         [[ $ans == /* ]] || { say "  Please give an absolute path."; continue; }
         # Creating this path must be possible: check the nearest existing
@@ -211,7 +256,7 @@ ask_big_dir() {  # ask_big_dir <label> <what-grows-here> <prompt> <default>
                 warn "continuing anyway (--yes); pass --storage-root to put this on large storage"
             fi
         else
-            say "  -> $(_fs_of "$ans"): $(_avail_of "$ans") free of $(_total_of "$ans")"
+            dimsay "  $(_fs_of "$ans"): $(_avail_of "$ans") free of $(_total_of "$ans")"
         fi
         printf '%s' "$ans"; return 0
     done
@@ -515,16 +560,21 @@ fi
 
 # ---------------------------------------------------------------- preflight --
 
-echo
-echo "RStudio Server (Open OnDemand) -- installer"
-echo "==========================================="
-echo
-echo "This sets up three things, and asks you where each one goes:"
-echo "  1. container images   (shared with anyone you like; ~2 GB each)"
-echo "  2. R package libraries (yours alone; one per R minor version)"
-echo "  3. session state + caches (yours alone; grows quietly)"
-echo "It writes one config file that the OnDemand form, the job script and the"
-echo "shell wrappers all read, so these choices are made exactly once."
+# Banner. Compact in a terminal, one line everywhere else -- scripts and logs
+# have no use for box art.
+if (( _ui_tty )) && ! (( ASSUME_YES )) && [[ $G_OK == '✓' ]]; then
+    # Box art only where the glyph probe says UTF-8 renders; a C-locale tty gets
+    # the plain header below rather than mojibake corners.
+    printf '\n%s' "$C_HDR"
+    printf '  ╭─ RStudio Server · Open OnDemand ─╮\n'
+    printf '  ╰─ mjz1/rstudio-ood · installer ───╯\n'
+    printf '%s' "$C_R"
+    note "Sets up: container images - R libraries - session state"
+    note "Answer '?' at any prompt for an explanation. Defaults are discovered."
+else
+    echo
+    echo "RStudio Server (Open OnDemand) -- installer"
+fi
 
 if command -v singularity >/dev/null 2>&1; then
     CONTAINER_CMD=singularity
@@ -549,10 +599,9 @@ fi
 
 # ------------------------------------------------------------------- storage --
 
-head2 "Storage"
-echo "  The three directories below grow to tens of gigabytes. Home directories on"
-echo "  HPC systems are small and quota'd, so they belong on large/scratch storage."
-echo "  Your home filesystem: $(_fs_of "$HOME") ($(_avail_of "$HOME") free of $(_total_of "$HOME"))"
+step 1 "Storage"
+note "These directories grow to tens of GB; keep them off your home filesystem."
+note "Home: $(_fs_of "$HOME") ($(_avail_of "$HOME") free of $(_total_of "$HOME"))"
 
 if [[ -z $STORAGE_ROOT ]]; then
     STORAGE_ROOT="$(pick_storage_root)"
@@ -563,9 +612,10 @@ if [[ -z $STORAGE_ROOT ]]; then
 fi
 STORAGE_ROOT="${STORAGE_ROOT/#\~/$HOME}"
 if interactive; then
-    blank
-    say "Large-storage root (the three directories default underneath it)"
-    STORAGE_ROOT="$(ask "Storage root" "$STORAGE_ROOT")"
+    STORAGE_ROOT="$(ask "Storage root" "$STORAGE_ROOT" \
+"Large-storage root; the three directories below default underneath it.
+Discovered from the mount table (~/work, \$SCRATCH, /data1/*/users/\$USER...),
+skipping anything on the home filesystem or that you cannot write to.")"
     STORAGE_ROOT="${STORAGE_ROOT/#\~/$HOME}"
 fi
 
@@ -575,28 +625,33 @@ fi
 
 if interactive; then
     IMAGE_DIR="$(ask_big_dir \
-        "Container images" \
-        "holds the .sif images: $SZ_IMAGES. Point this at a colleague's directory to share theirs." \
+        "Container images. Point this at a colleague's directory to use theirs." \
+        "Holds the .sif images: $SZ_IMAGES." \
         "Image directory" "$IMAGE_DIR")"
     R_LIBS_ROOT="$(ask_big_dir \
-        "R package libraries (yours alone -- packages are built per R minor version)" \
+        "R package libraries: yours alone, one per R minor version (packages are built per minor)." \
         "$SZ_RLIBS." \
         "R library root" "$R_LIBS_ROOT")"
     WORK_DIR="$(ask_big_dir \
-        "Session state and caches" \
-        "$SZ_WORK. RStudio session slots live in <dir>/.rstudio-sessions, the shared renv cache in <dir>/.cache." \
+        "Session state and caches: slots in <dir>/.rstudio-sessions, shared renv cache in <dir>/.cache." \
+        "$SZ_WORK." \
         "Work directory" "$WORK_DIR")"
 fi
 IMAGE_DIR="${IMAGE_DIR/#\~/$HOME}"
 R_LIBS_ROOT="${R_LIBS_ROOT/#\~/$HOME}"
 WORK_DIR="${WORK_DIR/#\~/$HOME}"
 
+if interactive; then
+    ok "images      $IMAGE_DIR"
+    ok "R library   $R_LIBS_ROOT"
+    ok "work dir    $WORK_DIR"
+fi
+
 # --------------------------------------------------------------------- images --
 
-head2 "Images: do you maintain them, or use someone else's?"
-echo "  The images are the one thing that CAN be shared -- they are identical for"
-echo "  everyone. Whoever maintains a directory runs sync-images.sh; everybody else"
-echo "  just reads it and never needs write access."
+step 2 "Images"
+note "Images are identical for everyone, so one person can maintain a directory"
+note "and everybody else just reads it -- no write access needed."
 
 IMAGE_DIR_EXISTS=0
 IMAGE_DIR_WRITABLE=0
@@ -621,11 +676,8 @@ fi
 if [[ -z $SYNC_ROLE ]]; then
     if (( IMAGE_DIR_EXISTS )) && (( ! IMAGE_DIR_WRITABLE )); then
         SYNC_ROLE="consumer"
-        echo
-        info "$IMAGE_DIR is owned by $IMAGE_DIR_OWNER and is not writable by you."
-        info "-> consumer: you will use these images, and never sync them."
+        ok "consumer: $IMAGE_DIR is owned by $IMAGE_DIR_OWNER; you read it, they sync it."
     elif interactive; then
-        echo
         if confirm "Will you pull/update images in $IMAGE_DIR yourself?" Y; then
             SYNC_ROLE="maintainer"
         else
@@ -643,9 +695,7 @@ fi
 # maintainer, and only honest if the ancestors are traversable too.
 if [[ $SYNC_ROLE == maintainer && -z $SHARE_IMAGES ]]; then
     if interactive; then
-        echo
-        info "Sharing: labmates can use your images if they can read this directory."
-        confirm "Make $IMAGE_DIR group-readable (g+rx) so your unix group can use it?" Y \
+        confirm "Share the images with your unix group (chmod -R g+rX)?" Y \
             && SHARE_IMAGES=yes || SHARE_IMAGES=no
     else
         SHARE_IMAGES=no
@@ -671,26 +721,24 @@ read -r -a VERSIONS <<<"$R_VERSIONS"
 
 # ------------------------------------------------------------------- cluster --
 
-head2 "Cluster and partitions"
+step 3 "Cluster & queues"
 
 if [[ -z $CLUSTER ]]; then
     CLUSTER="$(scontrol show config 2>/dev/null | awk -F'= *' '/^ClusterName/{print $2}' | tr -d ' ')"
     CLUSTER="${CLUSTER:-cluster}"
 fi
-echo "  The OnDemand cluster id must match a file in /etc/ood/config/clusters.d on"
-echo "  the OnDemand WEB node -- which is not this machine, so it cannot be checked"
-echo "  from here. Slurm calls this cluster '${CLUSTER}'; that is usually the same name."
 if interactive; then
-    CLUSTER="$(ask "OnDemand cluster id" "$CLUSTER")"
+    CLUSTER="$(ask "OnDemand cluster id" "$CLUSTER" \
+"Must match a file in /etc/ood/config/clusters.d on the OnDemand WEB node --
+not this machine, so it cannot be checked from here. Slurm calls this cluster
+'${CLUSTER}', which is usually the same name.")"
 fi
 
 if [[ -n $ALLOWED_LIST ]]; then
     mapfile -t ALLOWED < <(awk '{print $1}' <<<"$ALLOWED_LIST")
-    echo
-    echo "  Partitions your account may submit to (from Slurm's ACLs, filtered against"
-    echo "  your accounts: ${MY_ACCOUNTS:-none reported}):"
+    note "Partitions your account may submit to (Slurm ACLs x accounts: ${MY_ACCOUNTS:-none reported}):"
     for p in "${ALLOWED[@]}"; do
-        info "  $(_queue_label "$p" | cut -d'|' -f2-)"
+        info "$(_queue_label "$p" | cut -d'|' -f2-)"
     done
 
     # Default queue: the longest-running non-GPU partition the user may use. A
@@ -725,10 +773,18 @@ fi
 [[ -n $SYNC_PARTITION ]] || SYNC_PARTITION="$QUEUE"
 
 if interactive; then
-    echo
-    QUEUE="$(ask "Default partition (pre-selected in the form)" "$QUEUE")"
-    QUEUES="$(ask "Partitions to offer in the dropdown (comma-separated)" "$QUEUES")"
-    SYNC_PARTITION="$(ask "Partition for image pulls (short CPU job)" "$SYNC_PARTITION")"
+    QUEUE="$(ask "Default partition" "$QUEUE" \
+"Pre-selected in the launch form. Discovered default: the longest-running
+non-GPU partition your account may use (a GPU is a deliberate choice, never
+a default).")"
+    QUEUES="$(ask "Queue dropdown (comma-separated)" "$QUEUES" \
+"Everything your account may submit to, trimmed to taste. Each gets labelled
+with GPU type and wall-time limit; the form shows the label, submits the bare
+partition name.")"
+    SYNC_PARTITION="$(ask "Partition for image pulls" "$SYNC_PARTITION" \
+"sync-images.sh submits pulls here: a short CPU-only job (~20 min), so a
+short-limit partition beats one meant for week-long jobs.")"
+    ok "cluster $CLUSTER · default $QUEUE · pulls on $SYNC_PARTITION"
 fi
 
 # A partition Slurm has never heard of is a typo, and it will not fail until the
@@ -808,7 +864,7 @@ fi
 
 QUEUES_OUT="$(_enrich_queues "$QUEUES")"
 
-head2 "Plan"
+step 4 "Plan"
 info "$(printf '%-16s %s' 'images' "$IMAGE_DIR")"
 info "$(printf '%-16s %s' '' "${#FOUND[@]} found: ${FOUND[*]:-none} · role: $SYNC_ROLE$( [[ $SHARE_IMAGES == yes ]] && echo ' · will chmod g+rx')")"
 info "$(printf '%-16s %s' 'R libraries' "$R_LIBS_ROOT")"
@@ -834,10 +890,9 @@ fi
 
 # ------------------------------------------------------------------- R libs --
 
-head2 "R package libraries"
-echo "  Packages are compiled against a specific R minor version, so each version"
-echo "  gets its own directory. R silently ignores a missing R_LIBS_USER, so the"
-echo "  form only offers versions whose library exists -- these are those."
+step 5 "Install"
+note "R libraries: one directory per R minor version (packages are built per minor;"
+note "the form offers only versions whose library exists)."
 for v in "${VERSIONS[@]}"; do
     lib="$R_LIBS_ROOT/${v}_singularity"
     if [[ -d $lib ]]; then
@@ -853,15 +908,13 @@ done
 
 # ------------------------------------------------------------------ work dir --
 
-head2 "Session state and caches"
-info "create   $WORK_DIR/.rstudio-sessions   (one directory per named session slot)"
-info "create   $WORK_DIR/.cache              (shared renv package cache + container pull cache)"
+info "create   $WORK_DIR/.rstudio-sessions   (session slots)"
+info "create   $WORK_DIR/.cache              (renv + pull cache, shared)"
 do_mkdir "$WORK_DIR/.rstudio-sessions"
 do_mkdir "$WORK_DIR/.cache"
 
 # -------------------------------------------------------------------- images --
 
-head2 "Images"
 if [[ $SYNC_ROLE == maintainer ]]; then
     if (( ! IMAGE_DIR_EXISTS )); then
         info "create   $IMAGE_DIR"
@@ -892,12 +945,10 @@ fi
 
 # ----------------------------------------------------------------- app files --
 
-head2 "Application"
 deploy_app
 
 # ------------------------------------------------------------------- config --
 
-head2 "Configuration"
 info "write    $CONFIG_PATH"
 CONFIG_BODY="$(cat <<EOF
 # Written by rstudio_dev/install.sh on $(date -Iseconds)
@@ -969,9 +1020,6 @@ fi
 
 # -------------------------------------------------------------- shell init --
 
-head2 "Shell wrappers"
-echo "  r-wrappers.sh gives you R_ / Rscript_ / bash_ / sync_images: the same images"
-echo "  and libraries as the OnDemand app, from a terminal."
 SRC_LINE="source \"$APP_DIR/r-wrappers.sh\""
 if [[ -z $SHELL_INIT ]]; then
     # The wrappers are bash functions (BASH_SOURCE, mapfile, printf -v), so the
@@ -987,7 +1035,9 @@ if [[ -z $SHELL_INIT ]]; then
             ;;
     esac
     if interactive; then
-        SHELL_INIT="$(ask "Add the source line to which rc file? ('none' to skip)" "$_rc_default")"
+        SHELL_INIT="$(ask "Shell wrappers: add to which rc file? ('none' to skip)" "$_rc_default" \
+"Sources r-wrappers.sh, giving R_ / Rscript_ / bash_ / sync_images in your
+terminal: the same images and per-version libraries as the OnDemand app.")"
     else
         SHELL_INIT="$_rc_default"
     fi
@@ -1010,14 +1060,13 @@ fi
 
 # ----------------------------------------------------------------- summary --
 
-head2 "Done"
-echo "  What this touched:"
-info "  $CONFIG_PATH            (config; delete to uninstall)"
-info "  $APP_DIR       (the OnDemand app)"
-info "  $R_LIBS_ROOT/<ver>_singularity   (your R libraries)"
-info "  $WORK_DIR/{.rstudio-sessions,.cache}   (session state + caches)"
-[[ $SYNC_ROLE == maintainer ]] && info "  $IMAGE_DIR             (images)"
-[[ $SHELL_INIT != none ]] && info "  $SHELL_INIT              (one source line)"
+head2 "$G_OK Done. What this touched:"
+ok "config      $CONFIG_PATH  (delete to uninstall)"
+ok "app         $APP_DIR"
+ok "R libraries $R_LIBS_ROOT/<ver>_singularity"
+ok "state       $WORK_DIR/{.rstudio-sessions,.cache}"
+[[ $SYNC_ROLE == maintainer ]] && ok "images      $IMAGE_DIR"
+[[ $SHELL_INIT != none ]] && ok "shell rc    $SHELL_INIT  (one source line)"
 
 head2 "Next steps"
 if [[ $SYNC_ROLE == maintainer ]]; then
