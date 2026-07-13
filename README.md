@@ -42,7 +42,12 @@ source ~/.bashrc        # or whatever rc file you chose
 sync_images --sync      # submits a Slurm job; ~2 GB per R version
 ```
 
-and open **Interactive Apps → RStudio Server** in OnDemand.
+and open **Interactive Apps → RStudio Server** in OnDemand:
+
+<p align="center">
+  <img src="docs/img/full_rstudio_form.png" width="360"
+       alt="The launch form: Session picker, new session name, labelled Queue dropdown, cores/GPUs/hours/memory, and an RStudio image select showing R 4.6.1 with RStudio 2026.06.0">
+</p>
 
 Details — every flag, requirements (incl. the OnDemand "sandbox apps" switch),
 what it touches, uninstalling, sharing images across a lab, **migrating
@@ -65,6 +70,13 @@ isolated per-session, but your packages, renv cache and preferences are shared
 across all of them. The Slurm job is named `rstudio-<slot>` and the session card
 says which slot it is. One rule: **don't open the same project in two slots at
 once** — RStudio locks it.
+
+<p align="center">
+  <img src="docs/img/session_dropdown.png" width="430"
+       alt="The Session dropdown listing default plus three named slots (test, aml, egfr), each marked 'running now'">
+  <img src="docs/img/session_card.png" width="480"
+       alt="A running session's card: 16 cores, host, time remaining, 'Session: aml', the Connect to RStudio Server button, and the 'Signed out of RStudio? Click here.' expander">
+</p>
 
 **GPUs.** Pick a GPU partition in the Queue dropdown (each option is labelled
 with GPU type and time limit), set **Number of GPUs** > 0, and install a
@@ -113,11 +125,14 @@ how long ago it was pulled. Stale images on a terminal end with an offer to
 pull; if a sync job is already running you're pointed at it instead of
 double-submitting.
 
+<p align="center">
+  <img src="docs/img/image_sync.png" width="720"
+       alt="sync-images output: the shared image directory and maintainer role in the header, then four green up-to-date rows with R and RStudio versions and pull ages">
+</p>
+
+When something is stale, the run ends with the offer:
+
 ```
-sync-images · /data1/lab/images/rstudio
-  role: maintainer (owner: you) · registry: ghcr.io/mjz1/rstudio-img
-    R     STATUS      DETAIL
-  ✓ 4.5   up to date  R 4.5.3 · RStudio 2026.06.0+242 · pulled 2d ago
   ! 4.6   STALE       tag moved 9f2c41… -> f24a5d… · pulled 34d ago
 
   Pull 1 image(s) now (sbatch -> cpushort)? [Y/n]:

@@ -10,7 +10,14 @@ cd rstudio-ood
 ```
 
 The `curl | bash` one-liner and a checkout run the same script — the one-liner
-just fetches the repo into a temp directory first.
+just fetches the repo into a temp directory first. A full interview looks like
+this (note the lab-shared image repo being discovered, and the consumer role
+that follows from answering "no" to maintaining it):
+
+<p align="center">
+  <img src="img/installer_steps_1_4.png" width="620"
+       alt="Installer steps 1-4: storage prompts with free-space hints, discovery of the lab-shared image directory, the partition list with GPU/time labels, and the final Plan awaiting Proceed?">
+</p>
 
 ## Requirements
 
@@ -44,7 +51,13 @@ just fetches the repo into a temp directory first.
    worked but didn't.
 4. **Cluster and partitions.** The OnDemand cluster id defaults to Slurm's own
    `ClusterName`. The queue list defaults to *every partition your account may
-   submit to*, each labelled with its GPU type and wall-clock limit.
+   submit to*, each labelled with its GPU type and wall-clock limit — this is
+   what the form's Queue dropdown shows:
+
+   <p align="center">
+     <img src="img/queue_dropdown.png" width="560"
+          alt="The Queue dropdown: each partition labelled with CPU or its GPU types and wall-time limit, e.g. componc_gpu_int — GPU H100/H200, up to 1 day, interactive">
+   </p>
 5. **Which rc file** gets the `source .../r-wrappers.sh` line (`none` to skip).
    If the wrappers are already sourced somewhere — including one hop away, as
    in `.bashrc → .alias` — it says so and touches nothing. Under `--yes` it
