@@ -7,10 +7,13 @@
 # sidecar recording the registry manifest digest it was pulled from, so drift is
 # detected with three HTTP HEAD requests instead of a 4 GB download.
 #
-#   sync-images.sh                  check only -- cheap, safe on a login node
+#   sync-images.sh                  check; on a terminal, offers to pull if stale
 #   sync-images.sh --sync           pull stale images (submits an sbatch job)
 #   sync-images.sh --sync --local   pull inline, for use inside an allocation
 #   sync-images.sh --sync 4.6       restrict to specific R versions
+#   sync-images.sh --watch          follow the running/submitted sync job's log
+#   sync-images.sh --image-dir P    one-off target for THIS run (config unchanged;
+#                                   re-run install.sh to move images permanently)
 #   sync-images.sh --manifest       rebuild images.json from what is on disk
 #
 # Images are rolled in place but the previous build is retained as
@@ -58,8 +61,23 @@ LOGDIR="$IMAGE_DIR/.sync-logs"
 # Ask for all four or the digest header comes back empty for multi-arch indexes.
 ACCEPT='application/vnd.oci.image.index.v1+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json'
 
-die()  { printf 'sync-images: %s\n' "$*" >&2; exit 1; }
+# Shared UI kit (colour/glyphs, degrading to plain when not a TTY). Fallbacks
+# below keep a lone copy of this script working without its siblings.
+if [ -r "$(dirname "$SELF")/ui.sh" ]; then
+    # shellcheck source=ui.sh
+    . "$(dirname "$SELF")/ui.sh"
+else
+    C_R='' C_B='' C_DIM='' C_HDR='' C_OK='' C_WARN='' C_ERR=''
+    G_OK='ok' G_BAD='x' G_WARN='!' G_DOT='/'
+    die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+    warn() { printf '! warn: %s\n' "$*" >&2; }
+    note() { printf '  %s\n' "$*"; }
+    ok()   { printf '  %s %s\n' "$G_OK" "$*"; }
+fi
 log()  { printf '%s\n' "$*" >&2; }
+
+# A controlling terminal we may prompt on. Same /dev/tty gate as install.sh.
+_tty() { [[ -e /dev/tty ]] && (exec </dev/tty) 2>/dev/null; }
 
 # --- registry -----------------------------------------------------------------
 
@@ -193,6 +211,31 @@ PY
     chmod 0644 "$MANIFEST" 2>/dev/null || true   # same umask reasoning as the sidecars
 }
 
+# --- presentation ---------------------------------------------------------------
+
+# "pulled 12d ago", from the ISO-8601 pulled_at in the .info sidecar.
+_age_of() {
+    local ts then now d
+    ts=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("pulled_at",""))' "$1" 2>/dev/null) || return 1
+    [[ -n $ts ]] || return 1
+    then=$(date -d "$ts" +%s 2>/dev/null) || return 1
+    now=$(date +%s)
+    d=$(( (now - then) / 86400 ))
+    case $d in 0) printf 'today' ;; 1) printf 'yesterday' ;; *) printf '%dd ago' "$d" ;; esac
+}
+
+_row() {  # _row <colour> <glyph> <ver> <status> <detail>
+    printf '  %s%s%s %-5s %s%-11s%s %s
+' "$1" "$2" "$C_R" "$3" "$1" "$4" "$C_R" "$5"
+}
+
+# The one sync job we ever run at a time, if it is queued or running now.
+# Echoes "<jobid> <state> <elapsed>"; empty when none.
+running_sync_job() {
+    command -v squeue >/dev/null 2>&1 || return 0
+    squeue -h -u "$USER" -n rstudio-img-sync -o '%i %T %M' 2>/dev/null | head -1
+}
+
 # --- commands -----------------------------------------------------------------
 
 # Populates STALE[] with versions whose local digest != registry digest.
@@ -200,11 +243,13 @@ declare -a STALE=()
 declare -A REMOTE_DIGEST=() REMOTE_REF=()
 
 check() {
-    local ver loc rem ref line
-    printf '%-6s  %-12s  %s\n' "R" "STATUS" "DETAIL"
+    local ver loc rem ref line age info
+    printf '    %-5s %-11s %s\n' "R" "STATUS" "DETAIL"
     for ver in "${VERSIONS[@]}"; do
+        info="$IMAGE_DIR/rstudio-$ver.sif.info"
+        age="$(_age_of "$info" || true)"
         if ! line=$(registry_digest "$ver"); then
-            printf '%-6s  %-12s  %s\n' "$ver" "UNREACHABLE" "no digest from either registry"
+            _row "$C_WARN" "$G_WARN" "$ver" "UNREACHABLE" "no digest from either registry"
             continue
         fi
         rem=${line%% *}; ref=${line##* }
@@ -213,20 +258,21 @@ check() {
 
         if [[ ! -e $IMAGE_DIR/rstudio-$ver.sif ]]; then
             STALE+=("$ver")
-            printf '%-6s  %-12s  %s\n' "$ver" "MISSING" "$(short "$rem")"
+            _row "$C_ERR" "$G_BAD" "$ver" "MISSING" "never pulled $G_DOT $(short "$rem")"
         elif [[ -z $loc ]]; then
             STALE+=("$ver")
-            printf '%-6s  %-12s  %s\n' "$ver" "UNKNOWN" "no .digest sidecar; will re-pull"
+            _row "$C_WARN" "$G_WARN" "$ver" "UNKNOWN" "no .digest sidecar; will re-pull"
         elif [[ $loc != "$rem" ]]; then
             STALE+=("$ver")
-            printf '%-6s  %-12s  %s\n' "$ver" "STALE" "$(short "$loc") -> $(short "$rem")"
+            _row "$C_WARN" "$G_WARN" "$ver" "STALE" "tag moved $(short "$loc") -> $(short "$rem")${age:+ $G_DOT pulled $age}"
         else
-            local detail="$(short "$rem")"
-            if [[ -r $IMAGE_DIR/rstudio-$ver.sif.info ]]; then
+            local detail=""
+            if [[ -r $info ]]; then
                 # %-format, not an f-string: this cluster's python3 is 3.6.
-                detail+=" $(python3 -c 'import json,sys; i=json.load(open(sys.argv[1])); print("(R %s, RStudio %s)" % (i["r_full"], i["rstudio"]))' "$IMAGE_DIR/rstudio-$ver.sif.info" 2>/dev/null || true)"
+                detail="$(python3 -c 'import json,sys; i=json.load(open(sys.argv[1])); print("R %s %s RStudio %s" % (i["r_full"], sys.argv[2], i["rstudio"]))' "$info" "$G_DOT" 2>/dev/null || true)"
             fi
-            printf '%-6s  %-12s  %s\n' "$ver" "up to date" "$detail"
+            detail="${detail:-$(short "$rem")}${age:+ $G_DOT pulled $age}"
+            _row "$C_OK" "$G_OK" "$ver" "up to date" "$detail"
         fi
     done
     if [[ -d $R_LIBS_ROOT ]]; then
@@ -248,6 +294,7 @@ sync_local() {
     rebuild_manifest
 }
 
+SYNC_JID=""
 sync_sbatch() {
     mkdir -p "$LOGDIR"
     local jid
@@ -259,9 +306,33 @@ sync_sbatch() {
         --mem="$SBATCH_MEM" \
         --output="$LOGDIR/sync-%j.log" \
         "$SELF" --sync --local "$@")
-    log "submitted job $jid to pull: $*"
-    log "  log:   $LOGDIR/sync-$jid.log"
-    log "  watch: squeue -j $jid"
+    SYNC_JID="$jid"
+    ok "submitted job $jid to pull: $*" >&2
+    log "    log: $LOGDIR/sync-$jid.log"
+}
+
+# Follow a sync job: poll its state, tail its log once it exists, and re-check
+# when it leaves the queue. Ctrl-C detaches; the job is unaffected.
+watch_job() {
+    local jid="$1" logf="$LOGDIR/sync-$1.log" state prev="" tailpid=""
+    trap 'kill "$tailpid" 2>/dev/null; echo; note "detached -- job $jid continues; log: $logf"; exit 0' INT
+    while :; do
+        state="$(squeue -h -j "$jid" -o '%T' 2>/dev/null || true)"
+        [[ -z $state ]] && break
+        if [[ $state != "$prev" ]]; then
+            note "job $jid $G_DOT $state"
+            prev="$state"
+        fi
+        if [[ -z $tailpid && -f $logf ]]; then
+            tail -n +1 -f "$logf" & tailpid=$!
+        fi
+        sleep 5
+    done
+    sleep 1; kill "$tailpid" 2>/dev/null; wait "$tailpid" 2>/dev/null || true
+    trap - INT
+    ok "job $jid finished -- re-checking" >&2
+    STALE=()
+    check
 }
 
 # Print the header comment as the help text: everything from line 2 up to the
@@ -270,24 +341,59 @@ sync_sbatch() {
 usage() { awk 'NR==1{next} /^#/{sub(/^#[[:space:]]?/,""); print; next} {exit}' "$SELF"; }
 
 main() {
-    local do_sync=0 force_local=0 do_manifest=0
+    local do_sync=0 force_local=0 do_manifest=0 do_watch=0 oneoff_dir=""
     local -a want=()
     while (( $# )); do
         case "$1" in
-            --sync)     do_sync=1 ;;
-            --local)    force_local=1 ;;
-            --check)    do_sync=0 ;;
-            --manifest) do_manifest=1 ;;
-            -h|--help)  usage; return 0 ;;
-            -*)         die "unknown option: $1 (try --help)" ;;
-            *)          want+=("$1") ;;
+            --sync)      do_sync=1 ;;
+            --local)     force_local=1 ;;
+            --check)     do_sync=0 ;;
+            --watch)     do_watch=1 ;;
+            --image-dir) oneoff_dir="$2"; shift ;;
+            --manifest)  do_manifest=1 ;;
+            -h|--help)   usage; return 0 ;;
+            -*)          die "unknown option: $1 (try --help)" ;;
+            *)           want+=("$1") ;;
         esac
         shift
     done
     (( ${#want[@]} )) && VERSIONS=("${want[@]}")
 
+    # --image-dir redirects THIS run only. Moving images permanently is
+    # install.sh's job -- one writer per config key -- so say that out loud
+    # rather than letting a scratch experiment look like a migration.
+    if [[ -n $oneoff_dir ]]; then
+        IMAGE_DIR="${oneoff_dir/#\~/$HOME}"
+        MANIFEST="$IMAGE_DIR/images.json"
+        LOGDIR="$IMAGE_DIR/.sync-logs"
+        [[ -w $IMAGE_DIR || ! -d $IMAGE_DIR ]] && SYNC_ROLE=maintainer
+        warn "one-off target $IMAGE_DIR (config unchanged; re-run install.sh to move images permanently)"
+    fi
+
+    # Where this run reads from and writes to -- the question every sync tool
+    # should answer before it is asked.
+    local owner=""
+    [[ -d $IMAGE_DIR ]] && owner="$(stat -c '%U' "$IMAGE_DIR" 2>/dev/null || echo '?')"
+    head2 "sync-images $G_DOT $IMAGE_DIR"
+    note "role: $SYNC_ROLE${owner:+ (owner: $owner)} $G_DOT registry: ghcr.io/$GHCR_REPO"
+
     [[ -d $IMAGE_DIR ]] || die "image dir not found: $IMAGE_DIR"
     command -v "$SINGULARITY" >/dev/null || die "$SINGULARITY not on PATH"
+
+    # One sync at a time. A queued/running job already holds (or will hold) the
+    # lock; a second submission would just sit on it, so point at the live one
+    # instead. --watch attaches to it.
+    local running=""
+    if [[ -z ${SLURM_JOB_ID:-} ]] && ! (( force_local )); then
+        running="$(running_sync_job)"
+        if [[ -n $running ]]; then
+            set -- $running
+            warn "a sync job is already ${2,,} (job $1, ${3:-?} elapsed)"
+            log  "    log: $LOGDIR/sync-$1.log"
+            if (( do_watch )); then watch_job "$1"; return 0; fi
+            (( do_sync )) && die "not submitting a second sync; --watch to follow job $1"
+        fi
+    fi
 
     # Checking is safe for everyone; pulling is not. Someone using a colleague's
     # image directory has no business writing to it, and finding that out as a
@@ -308,9 +414,19 @@ main() {
     if (( do_manifest )); then rebuild_manifest; return 0; fi
 
     check
+
+    # On a terminal, a bare check that finds stale images ends with an offer to
+    # fix them -- the friendly entrypoint. Everything non-interactive (scripts,
+    # the sbatch job itself, consumers) keeps the check-only behaviour.
+    if ! (( do_sync )) && (( ${#STALE[@]} )) && [[ -z $running ]] \
+       && [[ $SYNC_ROLE != consumer && -w $IMAGE_DIR && -z ${SLURM_JOB_ID:-} ]] && _tty; then
+        local reply
+        read -r -p "  Pull ${#STALE[@]} image(s) now (sbatch -> $SBATCH_PARTITION)? [Y/n]: " reply </dev/tty
+        [[ -z ${reply:-} || $reply =~ ^[Yy] ]] && do_sync=1
+    fi
     (( do_sync )) || return 0
 
-    if (( ${#STALE[@]} == 0 )); then log "==> nothing to do"; return 0; fi
+    if (( ${#STALE[@]} == 0 )); then ok "nothing to do" >&2; return 0; fi
 
     # The digest check is three HEAD requests and belongs anywhere. The pull is
     # ~4 GB plus a squashfs build, so it belongs on a compute node.
@@ -319,6 +435,15 @@ main() {
     else
         command -v sbatch >/dev/null || die "sbatch not found; re-run with --local inside an allocation"
         sync_sbatch "${STALE[@]}"
+        if [[ -n $SYNC_JID ]]; then
+            if (( do_watch )); then
+                watch_job "$SYNC_JID"
+            elif _tty; then
+                local reply
+                read -r -p "  Watch it? [y/N]: " reply </dev/tty
+                [[ ${reply:-n} =~ ^[Yy] ]] && watch_job "$SYNC_JID"
+            fi
+        fi
     fi
 }
 

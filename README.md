@@ -101,12 +101,38 @@ large storage is correctly recognised as fine.
 ## Keeping images current
 
 ```bash
-sync-images.sh                  # check only. Three HEAD requests; safe on a login node.
+sync-images.sh                  # check; on a terminal, offers to pull if stale
 sync-images.sh --sync           # pull whatever is stale (submits an sbatch job)
 sync-images.sh --sync 4.6       # restrict to specific versions
 sync-images.sh --sync --local   # pull inline, when already inside an allocation
+sync-images.sh --watch          # follow the running/submitted sync job's log
+sync-images.sh --image-dir P    # one-off target for THIS run (config unchanged)
 sync-images.sh --manifest       # rebuild images.json from what is on disk
 ```
+
+Every run opens by saying **where it operates** — the image directory, your role
+(maintainer/consumer), the registry — because a sync tool should answer "where
+does this pull to?" before it's asked. (Answer: `RSTUDIO_IMAGE_DIR` from your
+config, never the current directory. `--image-dir` redirects one run for
+experiments; *moving* the images is `install.sh`'s job.) The status table shows
+each image's R/RStudio versions and how long ago it was pulled:
+
+```
+sync-images · /data1/lab/images/rstudio
+  role: maintainer (owner: you) · registry: ghcr.io/mjz1/rstudio-img
+    R     STATUS      DETAIL
+  ✓ 4.5   up to date  R 4.5.3 · RStudio 2026.06.0+242 · pulled 2d ago
+  ! 4.6   STALE       tag moved 9f2c41… -> f24a5d… · pulled 34d ago
+
+  Pull 1 image(s) now (sbatch -> cpushort)? [Y/n]:
+```
+
+That closing prompt appears only on a terminal, only for a maintainer with
+stale images — scripts and the sbatch job itself keep the check-only behaviour.
+If a sync job is already queued or running, every invocation says so (with its
+log path) instead of letting you submit a duplicate that would block on the
+lock, and `--watch` attaches to it: state changes, live log, and a fresh check
+when it finishes. Ctrl-C detaches without harming the job.
 
 The check is cheap and the pull is not — roughly 4 GB plus a squashfs build per
 image — so `--sync` submits the pull to Slurm rather than running it on a login
