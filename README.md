@@ -1,10 +1,17 @@
 # RStudio Server (Open OnDemand)
 
 An Open OnDemand app that runs RStudio Server inside a Singularity container on a
-Slurm compute node.
+Slurm compute node. It installs **alongside** whatever R setup you already have
+and touches none of it — module R, conda R, your dotfiles and libraries all
+behave exactly as before, so trying it risks nothing.
 
 - **One-line install** — an interview that discovers your storage and your
   Slurm partitions; nothing is hard-coded to one person, lab, or cluster.
+- **Non-invasive, fully reversible** — no `.Renviron`, `.Rprofile`, `PATH`, or
+  R variables are touched, and plain `R` still runs whatever it ran before;
+  everything here is active only inside this app's sessions and wrappers
+  ([the guarantee](docs/install.md#what-it-does-not-touch--the-coexistence-guarantee)).
+  Uninstalling is deleting a config file and an app directory.
 - **Current R and RStudio** — images (R 4.3–4.6) rebuilt monthly upstream;
   one command syncs them, and rollback to the previous build is a rename.
 - **Named concurrent sessions** — one per project, each resuming its own state;
@@ -17,9 +24,6 @@ Slurm compute node.
   R `torch` is pointed at the right CUDA build for the node automatically.
 - **Terminal wrappers** — `R_`, `Rscript_`, `bash_` run the same images and
   libraries outside OnDemand.
-- **Non-invasive** — touches no `.Renviron`, `.Rprofile`, `PATH`, or R
-  variables; plain `R` still runs whatever it ran before. Everything here takes
-  effect only inside this app's sessions and wrappers.
 
 > **Already have R packages on this cluster?** They usually carry over with one
 > command — but *which* command depends on how they were built, and copying the
