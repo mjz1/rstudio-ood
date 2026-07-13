@@ -4,11 +4,19 @@
 # Find available port to run server on
 port=$(find_port ${host})
 
-# Define a password and export it for RStudio authentication
-## HACK: specifying the password, possibly not necessary but was
-## having issues logging back into rstudio server after being afk
+# Define a password and export it for RStudio authentication. `password` is one
+# of OnDemand's DEFAULT connection params (with host and port), so the random
+# value reaches view.html.erb's Connect button on its own -- nothing else needs
+# to know it.
+#
+# This used to be overwritten with the literal string "password" (a HACK for
+# losing sessions when idle). That opened the session to the whole cluster: the
+# rserver port is reachable from other nodes, the username is public in squeue
+# (the job is literally named rstudio-<slot>), and the auth window is 6000
+# minutes -- so any cluster user could sign in and run code as you. The idle
+# problem the hack chased is what --auth-timeout-minutes addresses; if idle
+# logouts recur, raise that, never this.
 password="$(create_passwd 16)"
-password=password
 export RSTUDIO_PASSWORD="${password}"
 
 <%-

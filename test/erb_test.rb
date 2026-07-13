@@ -79,6 +79,12 @@ FileUtils.mkdir_p([IMAGES, LIBS, WORK, DATA])
 %w[4.4 4.5 4.6].each { |v| FileUtils.touch(File.join(IMAGES, "rstudio-#{v}.sif")) }
 %w[4.5 4.6].each     { |v| FileUtils.mkdir_p(File.join(LIBS, "#{v}_singularity")) }  # NB: no 4.4
 
+# A slot directory with YAML-hostile characters. The app sanitises slot names it
+# CREATES, but the dropdown lists whatever sits in the directory -- and anything
+# can mkdir there. One such name must not take down the whole form.
+HOSTILE_SLOT = 'evil" ] , [ "x'
+FileUtils.mkdir_p(File.join(WORK, '.rstudio-sessions', HOSTILE_SLOT))
+
 File.write(File.join(IMAGES, 'images.json'), JSON.pretty_generate(
   [{ 'r_version' => '4.6', 'r_full' => '4.6.1', 'rstudio' => '2026.06.0+242' },
    { 'r_version' => '4.5', 'r_full' => '4.5.2', 'rstudio' => '2026.06.0+242' },
@@ -149,6 +155,11 @@ end
 check('survives a PUN with no squeue on PATH (running-slot annotation is advisory)') do
   form.dig('attributes', 'session_name', 'options').is_a?(Array)
 end
+check('a slot directory with quotes in its name does not break the form YAML') do
+  # The strongest evidence is that YAML.safe_load succeeded above WITH the
+  # hostile directory present; also confirm the entry round-tripped intact.
+  form.dig('attributes', 'session_name', 'options').map(&:last).include?(HOSTILE_SLOT)
+end
 
 # ------------------------------------------------------ template/script.sh.erb --
 
@@ -206,6 +217,17 @@ blank = render(script_erb, context_for(
   session_name: 'old-slot', new_session_name: '   '
 ).instance_eval { context = self; binding })
 check('a blank new name falls back to the resumed slot') { blank.include?('SESSION_SLOT="old-slot"') }
+
+check('launching the "none available" placeholder fails with an explanation, not a backtrace') do
+  begin
+    render(script_erb, context_for(
+      rstudio_image: '', session_name: 'default', new_session_name: ''
+    ).instance_eval { context = self; binding })
+    false                                    # rendering must not succeed
+  rescue RuntimeError => e
+    e.message.include?('sync-images.sh')     # our message, not Errno::ENOENT
+  end
+end
 
 # ------------------------------------------------------------ submit.yml.erb --
 

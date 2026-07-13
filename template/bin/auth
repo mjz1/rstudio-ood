@@ -17,7 +17,10 @@ fi
 read -s -p "Password: " PASSWORD
 echo ""
 
-if [[ ${USERNAME} == ${USER} && ${PASSWORD} == ${RSTUDIO_PASSWORD} ]]; then
+# Quoted RHS: inside [[ ]], an unquoted right-hand side is a GLOB PATTERN,
+# not a string. The password is random alnum today, but an exact comparison
+# must not depend on that staying true.
+if [[ "${USERNAME}" == "${USER}" && "${PASSWORD}" == "${RSTUDIO_PASSWORD}" ]]; then
   echo "Successful authentication"
   exit 0
 else

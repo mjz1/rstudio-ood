@@ -151,7 +151,10 @@ attributes:
     help: "Resume a previous session, or pick 'default'. To start a fresh named session, type a name in 'New session name' below (it overrides this)."
     options:
 <%- slot_opts.each do |label, value| -%>
-      - [ "<%= label %>", "<%= value %>" ]
+      <%# .inspect double-quotes AND escapes: slot names come from the filesystem,
+          and one directory named  x", "y  would otherwise break this whole form's
+          YAML. Same for hand-edited queue labels below. -%>
+      - [ <%= label.inspect %>, <%= value.inspect %> ]
 <%- end -%>
   new_session_name:
     widget: "text_field"
@@ -166,7 +169,7 @@ attributes:
     help: "Pick a GPU partition (and set GPUs > 0) to get a GPU."
     options:
 <%- queue_opts.each do |label, value| -%>
-      - [ "<%= label %>", "<%= value %>" ]
+      - [ <%= label.inspect %>, <%= value.inspect %> ]
 <%- end -%>
   num_cores:
     widget: "number_field"
@@ -207,7 +210,7 @@ attributes:
     help: "R package library is selected automatically to match. Run sync-images.sh to update this list."
     options:
 <%- versions.each do |v| -%>
-      - [ "<%= label_for.call(v) %>", "<%= File.join(image_dir, "rstudio-#{v}.sif") %>" ]
+      - [ <%= label_for.call(v).inspect %>, <%= File.join(image_dir, "rstudio-#{v}.sif").inspect %> ]
 <%- end -%>
 <%- end -%>
 

@@ -217,11 +217,14 @@ multi-GB download. The upstream repo (`mjz1/rstudio-img`) rebuilds its rolling
 
 ## Known sharp edges
 
-- `template/before.sh.erb` generates a random RStudio password with
-  `create_passwd 16` and then overwrites it with the literal string `password`.
-  Annotated as a HACK for losing sessions when idle -- which is more plausibly the
-  `--auth-timeout-minutes` value, since raised to 6000. Left alone because
-  changing it alters the login flow.
+- **The session password must stay random.** For years `before.sh.erb`
+  overwrote the generated password with the literal string `password` (a HACK
+  for idle logouts), which let any cluster user sign into a running session --
+  the rserver port is reachable from other nodes, usernames are public in
+  squeue, and the auth window is 6000 minutes. `password` is one of OnDemand's
+  DEFAULT connection params (with host and port), so the random value reaches
+  view.html.erb's Connect button with no extra plumbing -- the hack never bought
+  anything. If idle logouts recur, raise `--auth-timeout-minutes`, never this.
 - `script.sh.erb` passes `--database-config-file` to work around an image bug
   fixed upstream in `rstudio-img` v1.1.1. It is now redundant for current images
   but still protects older ones. If you want to confirm the upstream fix stands

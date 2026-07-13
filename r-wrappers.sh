@@ -121,7 +121,12 @@ _r_exec() {   # _r_exec <sif> <libs> <cmd> [args...]
     # is site-specific, and a bind path that does not exist makes singularity
     # fail outright. _rsd_bind_args filters to what exists here.
     local -a binds=()
-    mapfile -t binds < <(_rsd_bind_args)
+    # Guarded: _rsd_bind_args lives in conf.sh, and this file gets copied around
+    # without its siblings. Missing conf just means no extra binds ($HOME still
+    # works), not a "command not found" on every wrapper call.
+    if declare -F _rsd_bind_args >/dev/null; then
+        mapfile -t binds < <(_rsd_bind_args)
+    fi
 
     # This host exports SSL_CERT_FILE/SSL_CERT_DIR pointing at /etc/pki (RHEL),
     # and Singularity forwards them into the Ubuntu container where those paths

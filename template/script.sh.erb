@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 <%-
+  # The form's "none available" placeholder submits an empty value, and a user
+  # CAN click Launch on it. File.realpath("") raises a bare Errno::ENOENT with a
+  # ruby backtrace; say what is actually wrong instead.
+  raise 'No RStudio image was selected -- the form found no images with a ' \
+        'matching package library. Run sync-images.sh --sync and relaunch.' \
+    if context.rstudio_image.to_s.strip.empty?
+
   # The package library is a function of the image, not an independent choice:
   # packages built for one R minor version will not load under another. Deriving
   # it here removes the old parallel `r_packages` dropdown, which could be set to

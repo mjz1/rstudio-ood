@@ -590,13 +590,15 @@ make the images usable rootless.
 
 ## Known issues
 
-- **`template/before.sh.erb` sets the RStudio password to the literal string
-  `password`.** It generates a random one with `create_passwd 16` and then
-  immediately overwrites it (`password=password`), annotated as a HACK to work
-  around losing the session after being idle. The session port is reachable from
-  other nodes, so this is worth revisiting — the idle problem is more likely the
-  `--auth-timeout-minutes` value, which has since been raised to 6000. Left
-  as-is because changing it alters the login flow.
+- **Fixed (2026-07): the session password used to be the literal string
+  `password`.** A HACK for idle logouts overwrote the generated random password,
+  which — combined with a cluster-reachable rserver port, usernames public in
+  `squeue` (jobs are named `rstudio-<slot>`), and a 6000-minute auth window —
+  let **any user on the cluster sign into your session and run code as you**.
+  The random password is now kept; it reaches the Connect button on its own
+  because `password` is one of OnDemand's default connection params. If idle
+  logouts recur, the knob is `--auth-timeout-minutes` in `script.sh.erb`, never
+  the password.
 - `sruni`/`scon` in `~/.alias` hardcode `-p interactive` and `scon`'s
   `-p|--partition` branch assigns to `time` rather than `partition`. Unrelated
   to this app, but adjacent.

@@ -51,7 +51,10 @@ if [ ! -f "$SRC_DIR/sync-images.sh" ] || [ ! -f "$SRC_DIR/form.yml.erb" ]; then
     else
         curl -fsSL "https://codeload.github.com/${REPO}/tar.gz/refs/heads/${REF}" | tar -xz -C "$_boot" \
             || { echo "error: download failed (need git or a reachable codeload.github.com)" >&2; exit 1; }
-        mv "$_boot"/*-"${REF}" "$_boot/repo"
+        # The tarball holds exactly one top-level directory, but its name mangles
+        # the ref (slashes become dashes), so match "the one directory" rather
+        # than trying to reconstruct the name -- *-"$REF" fails for feat/x refs.
+        mv "$_boot"/*/ "$_boot/repo"
     fi
     # Mark the re-run so it can reject --link against this temporary checkout.
     RSTUDIO_DEV_BOOTSTRAP_TMP=1 bash "$_boot/repo/install.sh" "$@"
