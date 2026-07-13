@@ -97,6 +97,14 @@ simply not offered by the form; that is deliberate, since R ignores a missing
 One person maintains the image directory; everyone else points at it and never
 writes to it.
 
+**The conventional location is auto-discovered.** If
+`<lab storage>/users/shared/images/rstudio` exists and holds images (e.g.
+`/data1/<lab>/users/shared/images/rstudio`), a plain `./install.sh` finds it
+and defaults to it — writable makes you the maintainer, read-only makes you a
+consumer. Lab members then need zero image-related flags. The directory should
+be group-readable with setgid (`chmod g+rxs`), which the parent `users/shared`
+convention usually already provides.
+
 ```bash
 # maintainer, once
 ./install.sh --image-dir /data1/lab/shared/rstudio --sync --share-images

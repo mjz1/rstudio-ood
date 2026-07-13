@@ -585,6 +585,23 @@ skipping anything on the home filesystem or that you cannot write to.")"
     STORAGE_ROOT="${STORAGE_ROOT/#\~/$HOME}"
 fi
 
+# A lab-shared image repository, if one exists: <lab storage>/users/shared/
+# images/rstudio holding at least one image. Discovered by the same glob family
+# as the storage root -- a convention, not a hard-coded lab -- and only adopted
+# when it actually contains images, so an empty stub cannot hand a new user an
+# empty form. The maintainer/consumer logic below then keys off writability as
+# usual: the person who owns the shared directory syncs it, everyone else reads
+# it, which is the whole point of a shared repo.
+if [[ -z $IMAGE_DIR ]]; then
+    for c in /data1/*/users/shared/images/rstudio /data/*/users/shared/images/rstudio; do
+        [[ -d $c && -r $c && -x $c ]] || continue
+        compgen -G "$c/rstudio-*.sif" >/dev/null || continue
+        IMAGE_DIR="$c"
+        ok "found lab-shared images: $c $( [[ -w $c ]] || echo '(read-only -> consumer)')"
+        break
+    done
+fi
+
 [[ -n $IMAGE_DIR   ]] || IMAGE_DIR="$STORAGE_ROOT/images/rstudio"
 [[ -n $R_LIBS_ROOT ]] || R_LIBS_ROOT="$STORAGE_ROOT/R/x86_64-pc-linux-gnu-library"
 [[ -n $WORK_DIR    ]] || WORK_DIR="$STORAGE_ROOT"

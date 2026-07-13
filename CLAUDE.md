@@ -94,6 +94,13 @@ runs on. Concretely, and each of these was a real bug:
   that does not exist.
 - Every config key defaults to the value that used to be hard-coded, so an
   existing install keeps working untouched.
+- **A lab-shared image repo is discovered, not configured**: the glob
+  `/data1/*/users/shared/images/rstudio` (same family as the storage-root
+  globs), adopted only when it holds at least one `rstudio-*.sif` -- an empty
+  stub must not hand a new user an empty form. Writability decides
+  maintainer/consumer as usual. The shahs3 shared repo lives there; the files
+  are HARDLINKS of the originals in the maintainer's own tree, so migration
+  cost nothing and deleting either path leaves the other intact.
 - **One writer per config key.** install.sh is the only thing that writes
   `~/.config/rstudio_dev/config`. sync-images' `--image-dir` is deliberately a
   one-off (and says so): if sync could also rewrite the key, a casual

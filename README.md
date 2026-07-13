@@ -23,8 +23,10 @@ from Slurm's ACLs, cluster id, container runtime, bind paths):
 - **Where do the big directories go?** Images (~16–32 GB), R libraries, session
   state. It proposes large storage it found and warns you off your quota'd home
   directory.
-- **Do you maintain the images, or use someone else's?** Point it at a
-  colleague's image directory and you never sync anything.
+- **Do you maintain the images, or use someone else's?** A lab-shared repo at
+  `<lab storage>/users/shared/images/rstudio` is found automatically; point it
+  anywhere else if you prefer. Read-only access makes you a consumer — you
+  never sync anything.
 - **Which rc file** gets the shell wrappers (`R_`, `Rscript_`, `bash_`).
 
 Then reload your shell and pull the images (skip if you use someone else's):
