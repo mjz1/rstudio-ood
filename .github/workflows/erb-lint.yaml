@@ -1,0 +1,54 @@
+name: Lint ERB templates
+
+# The ERB templates (form.yml.erb, submit.yml.erb, template/script.sh.erb) are
+# rendered by Open OnDemand inside the PUN, and there is no ruby on the cluster,
+# so they cannot be checked locally -- every change is unverified until someone
+# clicks Launch, and a ruby syntax error there just makes a session fail to
+# start. This job compiles the ruby that each template generates and fails on a
+# SyntaxError, turning "unverifiable until launch" into "at least syntactically
+# validated on every push".
+#
+# Scope and limits (deliberate): this checks the RUBY embedded in <% %>/<%= %>
+# blocks for *syntax* only. It does NOT execute the template, so it cannot catch
+# undefined methods/variables (e.g. context.foo being nil), OnDemand-specific
+# binding differences, or logic bugs -- those still need a launch. Syntax is the
+# cheapest and scariest class (a stray `end`, an unclosed tag), and is exactly
+# what shipped the num_gpus-on-nil crash's cousins.
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+jobs:
+  erb-syntax:
+    name: ERB templates parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # ubuntu-latest ships ruby with ERB as a default gem; no setup needed.
+      - name: Compile each ERB template's ruby
+        run: |
+          set -uo pipefail
+          ruby --version
+          fail=0
+          shopt -s nullglob
+          # trim_mode "-" matches OnDemand's <%- ... -%> tags. Compiling the
+          # generated source raises SyntaxError on a malformed template.
+          for f in $(git ls-files '*.erb'); do
+            if ruby -rerb -e \
+              'RubyVM::InstructionSequence.compile(ERB.new(File.read(ARGV[0]), trim_mode: "-").src)' \
+              "$f" 2>err.txt; then
+              echo "  ok    $f"
+            else
+              echo "  FAIL  $f"
+              sed 's/^/          /' err.txt
+              fail=1
+            fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::One or more ERB templates have a ruby syntax error."
+          fi
+          exit $fail

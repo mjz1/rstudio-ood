@@ -15,13 +15,21 @@
 #   ./install.sh --image-dir /data1/lab/shared/rstudio --no-sync
 #
 # Or run it straight from the internet, no checkout needed:
-#   curl -fsSL https://raw.githubusercontent.com/mjz1/openondemandapps/master/rstudio_dev/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash
+#
+# This repo is NOT the app directory. Open OnDemand runs whatever sits in
+# ~/ondemand/dev/<app>, so installing is a copy: edit here, deploy with
+# `./install.sh --app-only`, and nothing you type is live until you do. Deploy a
+# second copy under another name to get a staging app:
+#
+#   ./install.sh --app-only --app-dir ~/ondemand/dev/rstudio_next \
+#                --app-name "RStudio Server (next)"
 #
 # Run --help for the full list.
 #
 set -euo pipefail
 
-REPO="${RSTUDIO_DEV_REPO:-mjz1/openondemandapps}"
+REPO="${RSTUDIO_DEV_REPO:-mjz1/rstudio-ood}"
 REF="${RSTUDIO_DEV_REF:-master}"
 
 # ${BASH_SOURCE[0]} is unset when the script is piped into bash (`curl | bash`),
@@ -46,9 +54,19 @@ if [ ! -f "$SRC_DIR/sync-images.sh" ] || [ ! -f "$SRC_DIR/form.yml.erb" ]; then
         mv "$_boot"/*-"${REF}" "$_boot/repo"
     fi
     # Mark the re-run so it can reject --link against this temporary checkout.
-    RSTUDIO_DEV_BOOTSTRAP_TMP=1 bash "$_boot/repo/rstudio_dev/install.sh" "$@"
+    RSTUDIO_DEV_BOOTSTRAP_TMP=1 bash "$_boot/repo/install.sh" "$@"
     exit $?
 fi
+
+# Running from inside the OnDemand sandbox means the "checkout" IS the live app:
+# every edit is already in production, and this installer would be copying a
+# directory onto itself. That is the arrangement this repo was split out to end.
+case "$(readlink -f "$SRC_DIR")/" in
+    "$(readlink -f "$HOME/ondemand")"/*)
+        printf '\033[33mwarn:\033[0m running from inside %s -- this is the DEPLOY target, not a checkout.\n' "$HOME/ondemand" >&2
+        printf '       Edits here are live immediately. Clone the repo elsewhere and deploy with --app-only.\n' >&2
+        ;;
+esac
 
 CONFIG_PATH="${RSTUDIO_DEV_CONFIG:-$HOME/.config/rstudio_dev/config}"
 
@@ -75,6 +93,8 @@ R_VERSIONS="auto"          # auto = every rstudio-<ver>.sif found in IMAGE_DIR
 SYNC_ROLE=""               # maintainer (pulls images) | consumer (reads someone else's)
 SHARE_IMAGES=""            # yes = chmod g+rx the image dir so labmates can read it
 SHELL_INIT=""              # path to rc file, or "none"
+APP_NAME=""                # manifest.yml `name:`; blank = leave as shipped
+APP_ONLY=0                 # deploy the app files only; touch nothing else
 ASSUME_YES=0
 DRY_RUN=0
 DO_LINK=0
@@ -369,11 +389,22 @@ mount table and partitions from Slurm's ACLs.
                           filesystems your chosen directories live on, plus
                           Slurm/munge)
 
-  Install
+  Install / deploy
   --app-dir PATH          Where to install the OnDemand app
                           (default: ~/ondemand/dev/rstudio_dev)
+  --app-name NAME         Rewrite manifest.yml's `name:` in the deployed copy.
+                          Deploy a second copy under another name to get a
+                          staging app that OnDemand lists separately, e.g.
+                            --app-dir ~/ondemand/dev/rstudio_next \
+                            --app-name "RStudio Server (next)"
+  --app-only              Deploy the app files and nothing else: no config
+                          rewrite, no directory creation, no rc-file edit. This
+                          is the routine "I edited the checkout, push it live"
+                          command.
   --shell-init PATH|none  rc file to add the r-wrappers.sh source line to
-  --link                  Symlink the app instead of copying it
+  --link                  Symlink the app instead of copying it. Live-tracks your
+                          checkout -- handy, but then a half-finished edit is in
+                          production, which is what --app-only exists to avoid.
   --yes, -y               Accept discovered defaults, do not prompt
   --dry-run               Print actions without performing them
   --help, -h              This message
@@ -392,6 +423,8 @@ while (( $# )); do
         --share-images)    SHARE_IMAGES="yes"; shift ;;
         --no-share-images) SHARE_IMAGES="no"; shift ;;
         --app-dir)         APP_DIR="$2"; shift 2 ;;
+        --app-name)        APP_NAME="$2"; shift 2 ;;
+        --app-only)        APP_ONLY=1; shift ;;
         --cluster)         CLUSTER="$2"; shift 2 ;;
         --queue)           QUEUE="$2"; shift 2 ;;
         --queues)          QUEUES="$2"; shift 2 ;;
@@ -411,6 +444,59 @@ done
 # preview claims it will symlink.
 if (( DO_LINK )) && [[ -n ${RSTUDIO_DEV_BOOTSTRAP_TMP:-} ]]; then
     die "--link needs a persistent checkout; clone the repo and run ./install.sh --link from it"
+fi
+
+# With --link the "deployed" manifest IS the one in your checkout, so renaming it
+# would rename the app for every copy that points there -- including the stable one.
+if [[ -n $APP_NAME ]] && (( DO_LINK )); then
+    die "--app-name cannot be combined with --link: it would rewrite manifest.yml in your checkout"
+fi
+
+# Deploy the app files. The repo root is the app now, so the copy must exclude the
+# repo's own furniture -- a .git directory inside an OnDemand app directory is at
+# best confusing and at worst something the PUN walks.
+deploy_app() {
+    if [[ "$(readlink -f "$SRC_DIR")" == "$(readlink -f "$APP_DIR" 2>/dev/null)" ]]; then
+        info "in place $APP_DIR (already the app directory)"
+    elif (( DO_LINK )); then
+        info "symlink  $APP_DIR -> $SRC_DIR"
+        do_mkdir "$(dirname "$APP_DIR")"
+        dry || ln -sfn "$SRC_DIR" "$APP_DIR"
+    else
+        info "copy     $SRC_DIR -> $APP_DIR  (excluding .git, .github)"
+        do_mkdir "$APP_DIR"
+        dry || tar -cf - -C "$SRC_DIR" \
+                   --exclude=./.git --exclude=./.github --exclude=./.gitignore \
+                   --exclude=./CLAUDE.md . | tar -xf - -C "$APP_DIR"
+    fi
+    dry || chmod +x "$APP_DIR/sync-images.sh" 2>/dev/null || true
+
+    # A second copy under a different name is what makes a staging app appear as
+    # its own entry in OnDemand rather than a second row with the same title.
+    if [[ -n $APP_NAME ]]; then
+        info "name     manifest.yml -> \"$APP_NAME\""
+        dry || python3 - "$APP_DIR/manifest.yml" "$APP_NAME" <<'PY'
+import re, sys
+path, name = sys.argv[1], sys.argv[2]
+src = open(path).read()
+out, n = re.subn(r'(?m)^name:.*$', 'name: %s' % name, src, count=1)
+open(path, 'w').write(out if n else 'name: %s\n%s' % (name, src))
+PY
+    fi
+}
+
+# --app-only: the routine deploy. Push the checkout live and touch nothing else --
+# no config rewrite, no directory creation, no rc-file edit. Deliberately does not
+# run the interview: redeploying an edit must not be able to change your storage
+# or partitions behind your back.
+if (( APP_ONLY )); then
+    head2 "Deploy (app files only)"
+    deploy_app
+    echo
+    info "config, libraries and caches left untouched."
+    info "Reload the app in OnDemand (Interactive Apps -> the app's page) and launch."
+    dry && echo && echo "  (dry run: nothing was changed)"
+    exit 0
 fi
 
 # ---------------------------------------------------------------- preflight --
@@ -770,18 +856,7 @@ fi
 # ----------------------------------------------------------------- app files --
 
 head2 "Application"
-if [[ "$(readlink -f "$SRC_DIR")" == "$(readlink -f "$APP_DIR" 2>/dev/null)" ]]; then
-    info "in place $APP_DIR (running from the checkout)"
-elif (( DO_LINK )); then
-    info "symlink  $APP_DIR -> $SRC_DIR"
-    do_mkdir "$(dirname "$APP_DIR")"
-    dry || ln -sfn "$SRC_DIR" "$APP_DIR"
-else
-    info "copy     $SRC_DIR -> $APP_DIR"
-    do_mkdir "$APP_DIR"
-    dry || cp -r "$SRC_DIR/." "$APP_DIR/"
-fi
-dry || chmod +x "$APP_DIR/sync-images.sh" 2>/dev/null || true
+deploy_app
 
 # ------------------------------------------------------------------- config --
 

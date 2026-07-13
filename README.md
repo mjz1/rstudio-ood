@@ -258,6 +258,40 @@ non-empty package library — deliberately not `latest`, which tracks the newest
 from under an existing script. A missing library is a hard error, never a
 fallback to a different R's library.
 
+## Developing and deploying it
+
+**This repo is not the app directory.** Open OnDemand runs whatever sits in
+`~/ondemand/dev/<app>/`; this repo is the source, and installing is a copy.
+
+```
+~/work/repos/rstudio-ood/       the checkout -- edits here are INERT
+        │
+        │  ./install.sh --app-only
+        ▼
+~/ondemand/dev/rstudio_dev/     what OnDemand runs (you, and your lab)
+~/ondemand/dev/rstudio_next/    staging copy, its own entry in the UI
+```
+
+| Command | Use |
+|---|---|
+| `./install.sh` | first-time setup: the interview, config, directories, shell wrappers |
+| `./install.sh --app-only` | routine deploy: push your edits live, touch nothing else |
+| `./install.sh --app-only --app-dir ~/ondemand/dev/rstudio_next --app-name "RStudio Server (next)"` | deploy a staging app |
+
+`--app-only` deliberately skips the interview: redeploying an edit must not be
+able to change your storage or partitions behind your back.
+
+**Test on the staging app.** There is no ruby anywhere on the cluster, so
+`form.yml.erb` and `template/script.sh.erb` cannot be executed locally — CI lints
+their ruby *syntax*, and everything else is unverified until someone clicks
+Launch. Deploying a second copy under a different name gives you somewhere to
+click Launch that isn't the app other people are using.
+
+This separation exists because the repo *used to be* the sandbox directory:
+`~/ondemand/dev` was the git checkout, so every edit, branch switch and stash was
+instantly live. If you find yourself editing files under `~/ondemand/`, you are
+editing production — `install.sh` warns if you run it from there.
+
 ## Reusing this setup
 
 Nothing in this app is hard-coded to one person, lab or cluster. `install.sh`
@@ -268,21 +302,20 @@ which queues *your* account may actually submit to.
 Install straight from the internet — no checkout needed:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mjz1/openondemandapps/master/rstudio_dev/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash
 ```
 
 That runs the interview (it reads your answers from the terminal even though the
 script arrives over the pipe). `--dry-run` shows exactly what it would do and
 changes nothing; `--yes` accepts every discovered default without asking.
 
-Prefer a checkout for development, or for `--link`:
+Or from a checkout:
 
 ```bash
-git clone https://github.com/mjz1/openondemandapps.git
-cd openondemandapps/rstudio_dev
+git clone https://github.com/mjz1/rstudio-ood.git
+cd rstudio-ood
 ./install.sh --dry-run   # see the plan
 ./install.sh             # interactive
-./install.sh --link      # symlink the app instead of copying it
 ./install.sh --help      # every option
 ```
 
