@@ -17,6 +17,9 @@ Slurm compute node.
   R `torch` is pointed at the right CUDA build for the node automatically.
 - **Terminal wrappers** — `R_`, `Rscript_`, `bash_` run the same images and
   libraries outside OnDemand.
+- **Non-invasive** — touches no `.Renviron`, `.Rprofile`, `PATH`, or R
+  variables; plain `R` still runs whatever it ran before. Everything here takes
+  effect only inside this app's sessions and wrappers.
 
 > **Already have R packages on this cluster?** They usually carry over with one
 > command — but *which* command depends on how they were built, and copying the

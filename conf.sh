@@ -35,7 +35,14 @@ _rsd_load_conf() {
         if [ -z "${!key:-}" ]; then
             printf -v "$key" '%s' "$val"
         fi
-        export "${key?}"
+        # Deliberately NOT exported. Sourcing this from a shell rc used to spray
+        # a dozen variables (including the generically-named R_LIBS_ROOT) into
+        # the environment of EVERYTHING the user runs -- other R setups
+        # included, which is exactly the kind of interference this app promises
+        # not to commit. Nothing needs the export: every consumer script sources
+        # this file itself, and the values here are visible to functions defined
+        # in the same shell (the wrappers) without it. A user's own `export
+        # VAR=...` still wins, because the adopt above skips set variables.
     done < "$f"
 }
 

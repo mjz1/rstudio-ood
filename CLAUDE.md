@@ -101,6 +101,14 @@ runs on. Concretely, and each of these was a real bug:
   maintainer/consumer as usual. The shahs3 shared repo lives there; the files
   are HARDLINKS of the originals in the maintainer's own tree, so migration
   cost nothing and deleting either path leaves the other intact.
+- **conf.sh must never export.** It used to `export` every config key into the
+  sourcing shell, spraying a dozen variables (including the generically named
+  `R_LIBS_ROOT`) into the environment of everything the user runs -- other R
+  setups included -- and causing the stale-env-shadows-new-config problem twice
+  in one day. Values are plain shell variables now: visible to the wrappers
+  (same shell), invisible to child processes. Consumers source the config file
+  themselves; installer re-runs get continuity by seeding defaults FROM the
+  file. Do not reintroduce the export.
 - **One writer per config key.** install.sh is the only thing that writes
   `~/.config/rstudio_dev/config`. sync-images' `--image-dir` is deliberately a
   one-off (and says so): if sync could also rewrite the key, a casual

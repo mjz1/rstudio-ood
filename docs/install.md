@@ -98,6 +98,28 @@ To uninstall: delete the config file and the app directory, and remove that one
 `source` line. Your images, libraries and session state are just directories —
 delete them if you want the disk back.
 
+### What it does not touch — the coexistence guarantee
+
+Installing this must never break an R setup you already have (module R, conda
+R, your own containers). Concretely:
+
+- **No R dotfiles or variables.** Nothing writes `~/.Renviron`, `~/.Rprofile`,
+  or sets `R_LIBS`, `R_LIBS_USER`, `R_PROFILE` — in your shell or anywhere
+  else. `module load R` behaves exactly as before.
+- **No shell environment pollution.** Sourcing the wrappers defines *functions*
+  (`R_`, `Rscript_`, `bash_`, `sync_images`) and exports **nothing** — a child
+  process of your shell sees zero variables from this app. Plain `R` and
+  `Rscript` are untouched names.
+- **Everything is scoped to invocation.** `R_LIBS_USER`, `XDG_CACHE_HOME`,
+  `CUDA`, TLS remaps: all set inside the container, per call, only when you run
+  a session or a wrapper. Run anything else and this app does not exist.
+- **Its own settings live in its own file** (`~/.config/rstudio_dev/config`),
+  read only by this app's four components.
+
+The one deliberate touch is the single `source` line in the rc file you chose
+(skippable with `--shell-init none`), which does only what the second bullet
+describes.
+
 **What it deliberately does not do:** pull the images (that is a Slurm job — run
 `sync_images --sync` afterwards) or populate your R libraries (they start
 empty — install packages from inside RStudio, or `Rscript_ -e

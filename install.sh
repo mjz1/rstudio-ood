@@ -524,6 +524,31 @@ if (( APP_ONLY )); then
     exit 0
 fi
 
+# ------------------------------------------------------- re-run continuity --
+
+# A re-run should propose what you chose LAST time, not re-discover from
+# scratch. Seed unset values from the existing config file -- flags always win
+# because they were parsed above. (This used to happen by accident, via config
+# values exported into the shell; conf.sh no longer exports anything, so the
+# continuity is read from the file, where it belongs.)
+if [[ -r $CONFIG_PATH ]]; then
+    _seed() {  # _seed <VAR> <config-key>
+        local cur="${!1}" val
+        [[ -n $cur ]] && return 0
+        val="$(sed -n "s/^${2}=//p" "$CONFIG_PATH" | tail -1)"
+        [[ -n $val ]] && printf -v "$1" '%s' "$val"
+        return 0
+    }
+    _seed IMAGE_DIR      RSTUDIO_IMAGE_DIR
+    _seed R_LIBS_ROOT    R_LIBS_ROOT
+    _seed WORK_DIR       RSTUDIO_WORK_DIR
+    _seed STORAGE_ROOT   RSTUDIO_WORK_DIR
+    _seed CLUSTER        RSTUDIO_CLUSTER
+    _seed QUEUE          RSTUDIO_QUEUE
+    _seed QUEUES         RSTUDIO_QUEUES
+    _seed SYNC_PARTITION RSTUDIO_SYNC_PARTITION
+fi
+
 # ---------------------------------------------------------------- preflight --
 
 # Banner. Compact in a terminal, one line everywhere else -- scripts and logs
@@ -773,8 +798,13 @@ fi
 # A partition Slurm has never heard of is a typo, and it will not fail until the
 # user clicks Launch. Say so now.
 if [[ -n $ALLOWED_LIST ]]; then
-    for q in ${QUEUES//,/ } "$QUEUE" "$SYNC_PARTITION"; do
-        q="${q%%|*}"
+    # Entries are COMMA-separated and may carry a `|label` whose text contains
+    # spaces -- word-splitting on whitespace shreds each label into fake
+    # "partitions" ('CPU', '<=1d', ...). Split on commas, then strip the label.
+    IFS=',' read -r -a _qentries <<<"$QUEUES"
+    for q in "${_qentries[@]}" "$QUEUE" "$SYNC_PARTITION"; do
+        q="${q%%|*}"; q="${q#"${q%%[![:space:]]*}"}"; q="${q%"${q##*[![:space:]]}"}"
+        [[ -z $q ]] && continue
         grep -qx -- "$q" <<<"$(awk '{print $1}' <<<"$ALLOWED_LIST")" \
             || warn "partition '$q' is not one your account may submit to; jobs will be rejected"
     done
