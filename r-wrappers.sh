@@ -116,6 +116,19 @@ _r_exec() {   # _r_exec <sif> <libs> <cmd> [args...]
         fi
     fi
 
+    # renv keeps its package library and cache under $XDG_CACHE_HOME/R/renv, and
+    # OnDemand sessions pin XDG_CACHE_HOME to $RSTUDIO_WORK_DIR/.cache (large
+    # storage). A host shell that does not export it would leave the wrappers on
+    # the default ~/.cache -- a SECOND renv cache, growing to tens of GB inside
+    # a quota'd home directory, disjoint from every package the sessions
+    # installed. Align with the sessions; an exported value still wins, the same
+    # precedence as every other setting here.
+    local cache_env=""
+    if [ -z "${XDG_CACHE_HOME:-}" ]; then
+        cache_env="${RSTUDIO_WORK_DIR:-$HOME/work}/.cache"
+        mkdir -p "$cache_env" 2>/dev/null || true
+    fi
+
     # Host paths bound into the container come from RSTUDIO_BIND_PATHS (config),
     # not a hard-coded /data1: the storage a user's images and libraries live on
     # is site-specific, and a bind path that does not exist makes singularity
@@ -133,10 +146,19 @@ _r_exec() {   # _r_exec <sif> <libs> <cmd> [args...]
     # do not exist. OpenSSL-based TLS then fails -- Quarto (Deno) reports
     # "Failed to load platform certificates". Remap to the container's bundle
     # rather than --cleanenv, which would also drop SLURM_* and R_LIBS_USER.
+    # Conditional variables go through `env`, never a ${var:+NAME=val} prefix:
+    # bash decides what is an assignment BEFORE expansion, so an assignment that
+    # materialises out of ${:+} is parsed as the COMMAND ("NAME=val: No such
+    # file or directory"). The old ${cuda_env:+...} form had exactly this bug --
+    # invisible on CPU nodes, where it expands to nothing, fatal on GPU nodes.
+    local -a extra_env=()
+    [ -n "$cuda_env" ]  && extra_env+=("SINGULARITYENV_CUDA=$cuda_env")
+    [ -n "$cache_env" ] && extra_env+=("SINGULARITYENV_XDG_CACHE_HOME=$cache_env")
+
     SINGULARITYENV_R_LIBS_USER="$libs" \
     SINGULARITYENV_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     SINGULARITYENV_SSL_CERT_DIR=/etc/ssl/certs \
-    ${cuda_env:+SINGULARITYENV_CUDA="$cuda_env"} \
+    env "${extra_env[@]}" \
     "${RSTUDIO_SINGULARITY:-singularity}" exec ${nv} \
         "${binds[@]}" \
         -B "$HOME:$HOME" \
