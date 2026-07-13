@@ -308,6 +308,30 @@ check('a locked-out user can SEE the credentials (else they hard-code the passwo
   view.include?('S3cretPerSession') && view.downcase.include?('signed out')
 end
 
+# The slot travels job -> connection.yml -> card via conn_params. Three parties
+# must agree: submit.yml.erb declares it, before.sh.erb assigns it, the view
+# shows it -- and cards of sessions that PREDATE the param must still render.
+check('submit.yml declares session_slot as a conn param') do
+  YAML.safe_load(cpu).dig('batch_connect', 'conn_params').include?('session_slot')
+end
+check('before.sh assigns the sanitised slot for connection.yml to capture') do
+  before = render(File.join(APP, 'template', 'before.sh.erb'), context_for(
+    session_name: 'default', new_session_name: 'my proj!'
+  ).instance_eval { context = self; binding })
+  before.include?('session_slot="my_proj_"')
+end
+check('the card names its slot') do
+  with_slot = render(File.join(APP, 'view.html.erb'), locals_binding(
+    host: 'n1', port: 1, password: 'x', csrf_token: 'y', session_slot: 'aml'
+  ))
+  with_slot.include?('<code>aml</code>')
+end
+check('a pre-existing session with no session_slot still renders its card') do
+  render(File.join(APP, 'view.html.erb'), locals_binding(
+    host: 'n1', port: 1, password: 'x', csrf_token: 'y'
+  )).include?('auth-do-sign-in')
+end
+
 # ---------------------------------------------------------------------- done --
 
 puts

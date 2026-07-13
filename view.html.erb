@@ -21,6 +21,18 @@
 <script>
   document.cookie = "csrf-token=<%= csrf_token %>; path=/rnode/<%= host %>/<%= port %>; secure";
 </script>
+<%-
+  # Which named session slot this card belongs to (aml, egfr, default, ...).
+  # Guarded with defined?: sessions launched before session_slot became a conn
+  # param have no such key in their connection.yml, and a bare reference would
+  # crash THEIR cards on the shared dashboard.
+  _slot = defined?(session_slot) ? session_slot.to_s : ''
+-%>
+<%- unless _slot.empty? -%>
+<p style="margin-bottom:0.5em">
+  Session: <strong><code><%= _slot %></code></strong>
+</p>
+<%- end -%>
 <form action="/rnode/<%= host %>/<%= port %>/auth-do-sign-in" method="post" target="_blank">
   <input type="hidden" name="username" value="<%= ENV["USER"] %>">
   <input type="hidden" name="password" value="<%= password %>">

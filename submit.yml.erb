@@ -7,8 +7,14 @@
 #
 batch_connect:
   template: "basic"
+  # Everything named here (plus OnDemand's defaults: host, port, password) is
+  # captured from the job's shell into connection.yml and becomes available to
+  # view.html.erb -- that is the ONLY channel from a running job to its session
+  # card. session_slot is set in before.sh.erb so the card can say which named
+  # session (aml, egfr, default...) it is.
   conn_params:
      - csrf_token
+     - session_slot
 
 script:
   queue_name: "<%= queue %>"
