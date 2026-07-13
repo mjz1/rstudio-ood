@@ -13,36 +13,34 @@ things go and discovers the rest from the machine it runs on.
 curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash
 ```
 
-That's it. It runs an interview (reading your answers from the terminal even
-though the script arrives over a pipe) and then prints your next steps.
-
-Want to look before you leap — this changes nothing at all:
+That runs an interview (reading your answers from the terminal even though the
+script arrives over a pipe). Answer `?` at any prompt for a full explanation.
+To preview everything without changing anything, add `--dry-run`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --dry-run
 ```
 
-The installer asks you **three questions that matter** and works the rest out for
-itself:
+It asks you **three questions that matter** and works the rest out for itself:
 
-- **Where do the big directories go?** Container images, your R libraries, and
-  session state + caches. It proposes large storage it found (`~/work`,
-  `$SCRATCH`, `/data1/*/users/$USER`) and **warns you off your home directory**,
+- **Where do the big directories go?** Images, R libraries, session state.
+  It proposes large storage it found and **warns you off your home directory**,
   which is small, quota'd, and shared.
 - **Do you maintain the images, or use someone else's?** Point it at a
-  colleague's image directory and you never sync anything. Images are identical
-  for everyone, so one person can keep them current for a whole lab.
+  colleague's image directory and you never sync anything.
 - **Which rc file** gets the shell wrappers (`R_`, `Rscript_`, `bash_`).
 
-Everything else is discovered: your Slurm partitions (from the partition ACLs —
-it only offers queues your account may actually submit to, labelled with GPU type
-and time limit), the cluster id, the container runtime, and which filesystems
-need binding into the container.
+Everything else is discovered: your Slurm partitions (from the ACLs — only
+queues your account may actually submit to, labelled with GPU type and time
+limit), the cluster id, the container runtime, and the filesystems that need
+binding into the container.
 
-Then:
+Then reload your shell and pull the images (skip this if you use someone
+else's — theirs are already there):
 
 ```bash
-sync-images.sh --sync    # pull the images (a Slurm job; skip if you're a consumer)
+source ~/.bashrc        # or whatever rc file you chose
+sync_images --sync      # submits a Slurm job; ~2 GB per R version
 ```
 
 and open **Interactive Apps → RStudio Server** in OnDemand.
@@ -88,114 +86,19 @@ small, quota'd and shared, and filling it breaks your logins, not just RStudio.
 | Work dir | `RSTUDIO_WORK_DIR` | `.rstudio-sessions/<slot>` (session state), `.cache` (renv library + cache, container pull cache) | tens of GB | **No** |
 
 The images are the only thing that *can* be shared, and they are identical for
-everyone — so one person maintains a directory and everyone else reads it. The R
-libraries cannot be shared: packages are compiled against a specific R minor
-version and installed into a directory you own. See
-[Reusing this setup](#reusing-this-setup).
+everyone — so one person maintains a directory and everyone else reads it
+([how](#sharing-images-across-a-lab)). The R libraries cannot be shared:
+packages are compiled against a specific R minor version and installed into a
+directory you own.
 
 `install.sh` warns if any of the three lands on your home filesystem — including
 under `--yes`, which is the run where nobody was asked anything. It decides by
 comparing mount points, not by matching path prefixes, so a `~/work` symlink onto
 large storage is correctly recognised as fine.
 
-## Keeping images current
+## Using it
 
-```bash
-sync-images.sh                  # check; on a terminal, offers to pull if stale
-sync-images.sh --sync           # pull whatever is stale (submits an sbatch job)
-sync-images.sh --sync 4.6       # restrict to specific versions
-sync-images.sh --sync --local   # pull inline, when already inside an allocation
-sync-images.sh --watch          # follow the running/submitted sync job's log
-sync-images.sh --image-dir P    # one-off target for THIS run (config unchanged)
-sync-images.sh --manifest       # rebuild images.json from what is on disk
-```
-
-Every run opens by saying **where it operates** — the image directory, your role
-(maintainer/consumer), the registry — because a sync tool should answer "where
-does this pull to?" before it's asked. (Answer: `RSTUDIO_IMAGE_DIR` from your
-config, never the current directory. `--image-dir` redirects one run for
-experiments; *moving* the images is `install.sh`'s job.) The status table shows
-each image's R/RStudio versions and how long ago it was pulled:
-
-```
-sync-images · /data1/lab/images/rstudio
-  role: maintainer (owner: you) · registry: ghcr.io/mjz1/rstudio-img
-    R     STATUS      DETAIL
-  ✓ 4.5   up to date  R 4.5.3 · RStudio 2026.06.0+242 · pulled 2d ago
-  ! 4.6   STALE       tag moved 9f2c41… -> f24a5d… · pulled 34d ago
-
-  Pull 1 image(s) now (sbatch -> cpushort)? [Y/n]:
-```
-
-That closing prompt appears only on a terminal, only for a maintainer with
-stale images — scripts and the sbatch job itself keep the check-only behaviour.
-If a sync job is already queued or running, every invocation says so (with its
-log path) instead of letting you submit a duplicate that would block on the
-lock, and `--watch` attaches to it: state changes, live log, and a fresh check
-when it finishes. Ctrl-C detaches without harming the job.
-
-The check is cheap and the pull is not — roughly 4 GB plus a squashfs build per
-image — so `--sync` submits the pull to Slurm rather than running it on a login
-node. If `$SLURM_JOB_ID` is set it runs inline instead, on the assumption you
-are already on a compute node.
-
-**If you use someone else's image directory you never run `--sync`.** Checking is
-safe for anyone; pulling needs write access. `install.sh` records which you are
-(`RSTUDIO_SYNC_ROLE`), and `--sync` refuses up front with an explanation rather
-than failing with permission-denied halfway through a 2 GB pull, inside a Slurm
-job, in a log you would have to go and find.
-
-This cluster has **no cron available**: `scrontab` is disabled and login-node
-`crontab` is blocked by PAM. Sync is therefore a manual step. Since
-`rstudio-img` rebuilds rolling tags on the 1st of each month, running
-`sync-images.sh` some time after that is enough.
-
-### Rolling images, and how to roll back
-
-Images roll in place: `rstudio-4.5.sif` is overwritten when the registry's `4.5`
-tag moves. The outgoing build is retained as `rstudio-4.5.sif.prev` (created as
-a hardlink, so it costs no extra disk until the new image lands). To roll back:
-
-```bash
-cd "$RSTUDIO_IMAGE_DIR"
-mv rstudio-4.5.sif.prev rstudio-4.5.sif
-mv rstudio-4.5.sif.prev.digest rstudio-4.5.sif.digest
-sync-images.sh --manifest
-```
-
-`images.json` records the digest, R, RStudio and Quarto versions, and pull time
-of every image, so you can always reconstruct what a given analysis ran under.
-
-**What actually moves between rebuilds.** R's patch version is the *least*
-significant thing here — the package ABI is stable within a minor version, so
-your `4.5_singularity` library keeps working across 4.5.1 → 4.5.2. What moves
-more: the Dockerfile upgrades RStudio Server to the latest stable Posit release
-on every build (one rebuild took it from 2025.09.2 to 2026.06.0), and the
-rocker base pins CRAN to a *dated* snapshot whose date advances when rocker
-rebuilds, shifting every package version in the image's site library. Your
-personal library shadows the site library, which insulates you from most of that.
-
-## The form
-
-`form.yml.erb` **discovers** images rather than listing them. It globs
-`rstudio-<minor>.sif`, labels each from `images.json` (`R 4.6.1 · RStudio
-2026.06.0+242`), and offers only versions whose package library actually exists.
-
-Two consequences:
-
-- Adding an R version upstream needs no edit here. Run `sync-images.sh --sync`.
-- There is **no separate "R packages" dropdown**. The library is a function of
-  the image — packages built for one R minor will not load under another — so
-  `script.sh.erb` derives it. Previously the two were independent selects, and
-  the R 4.4 option pointed at a library directory that did not exist. R ignores
-  a missing `R_LIBS_USER` silently, so that failure was invisible.
-
-`form.yml.bak` is the retired hard-coded version, kept for reference. It is
-inert: OnDemand reads `form.yml.erb`. If your OnDemand is too old to render
-`form.yml.erb`, the app will fail visibly — restore with
-`mv form.yml.bak form.yml`.
-
-## Signing in (there is no password field, on purpose)
+### Signing in (there is no password field, on purpose)
 
 The launch form has no password box because you do not choose one. Each session
 gets a **random 16-character password**, generated at job start and persisted by
@@ -212,24 +115,14 @@ session card, which shows the username and password for that session.
 In practice this is rare: the Connect form sets `staySignedIn`, and
 `--auth-timeout-minutes` is 6000 (100 hours) — both longer than the 7-day job
 ceiling — so the usual way to see a sign-in page is to explicitly sign out.
+(The password was not always random; see [Known issues](#known-issues) if you
+inherit an older copy of this app.)
 
-> **Historical note, worth knowing if you inherit an older copy.** The password
-> used to be overwritten with the literal string `password`, hacked in to work
-> around exactly this confusion. It meant **any user on the cluster could sign
-> into your session and run code as you**: the rserver port is reachable from
-> other nodes and your username is public in `squeue` (the job is named
-> `rstudio-<slot>`). The recovery path above is what that hack was reaching for,
-> and it costs nothing.
-
-## Multiple concurrent sessions
+### Multiple concurrent sessions
 
 You can run several RStudio sessions at once — one per project, say — and switch
 between them instantly instead of reloading. Each session is an independent
-`rserver` on its own node, so the only thing that used to make concurrent
-sessions collide was **shared RStudio state in `$HOME`** (`~/.local/share/rstudio`,
-the cache, and an abend-reset loop that rewrote *every* running session's state).
-
-Sessions are now isolated by a **named slot**:
+`rserver` on its own node; sessions are isolated by a **named slot**:
 
 - The launch form has a **Session** dropdown listing your existing slots (newest
   first, with a "last used" hint) — pick one to resume its state — plus a **New
@@ -246,7 +139,7 @@ Sessions are now isolated by a **named slot**:
   (`~/.config`) is shared too, so themes/keybindings/settings and your R package
   library are consistent across sessions.
 - Slot state **persists**, so a slot resumes where you left it. The Slurm job is
-  named `rstudio-<slot>` so concurrent sessions are distinguishable in `squeue`.
+  named `rstudio-<slot>`, and the session card says which slot it is running.
 - **Note:** packages that cache *data* under `XDG_DATA_HOME` (e.g. `SeuratData`)
   become per-slot, so you'd install those datasets once per slot.
 
@@ -263,7 +156,7 @@ Caveats:
 - Each session is a separate Slurm allocation, so N sessions use N jobs' worth of
   cores/memory/GPU against your limits.
 
-## GPU sessions
+### GPU sessions
 
 To use a GPU:
 
@@ -287,10 +180,10 @@ drivers and future upgrades. Override the supported list with `RSTUDIO_TORCH_CUD
 (space-separated, highest first) if torch adds or drops a `cuXXX` build.
 
 `libtorch` installs into your per-version R library
-(`R_LIBS_ROOT/<ver>_singularity/torch/lib/`, on `/data1`, ~6 GB extracted), so it
-persists across sessions but is **per R minor version** — install it again under
-each R you use with a GPU. If you already installed the CPU build, force a
-one-time re-download: `torch::install_torch(reinstall = TRUE)` then restart R.
+(`R_LIBS_ROOT/<ver>_singularity/torch/lib/`, ~6 GB extracted), so it persists
+across sessions but is **per R minor version** — install it again under each R
+you use with a GPU. If you already installed the CPU build, force a one-time
+re-download: `torch::install_torch(reinstall = TRUE)` then restart R.
 
 How it works, and why it is built this way:
 
@@ -298,20 +191,18 @@ How it works, and why it is built this way:
   *discovers* rather than asking you to type: it reads each partition's
   `AllowAccounts` / `DenyAccounts` / `AllowGroups` and keeps the ones your Slurm
   associations and unix groups actually permit. GPU partitions are site- and
-  account-specific — on this cluster the shared `gpu` partition *denies* the
-  `shahs3` account while `componc_gpu_batch` / `componc_gpu_int` allow it — so a
-  hard-coded list is wrong for everyone but its author.
+  account-specific — on the reference cluster the shared `gpu` partition
+  *denies* most lab accounts while lab-specific `*_gpu_*` partitions allow them
+  — so a hard-coded list is wrong for everyone but its author.
 - **Each option is labelled with its GPU type and time limit**, so you know what
   you are picking — e.g. `componc_gpu_int — GPU H100/H200 · <=1d · interactive`.
   A partition counts as GPU when **every** node in it offers a GPU — not when
-  *some* node does, which is true of the CPU partitions too (`cpushort` has 34
-  GPU nodes among 235) and would label everything "GPU", and not from its name,
-  which is a naming convention rather than a fact. `install.sh` generates the
-  labels from Slurm at install time, on a login node, and stores them in
-  `RSTUDIO_QUEUES` as `partition|label` entries; the form just displays them and
-  submits the bare partition. Labels go stale only if a partition's limits change
-  — re-run `install.sh` to refresh.
-  You never type the label: `--queues` takes bare partition names.
+  *some* node does, which is true of CPU partitions too (GPU nodes sit in both)
+  and would label everything "GPU"; and not from its name, which is a naming
+  convention rather than a fact. Labels are generated from Slurm at install
+  time and stored in `RSTUDIO_QUEUES` as `partition|label` entries; the form
+  displays the label and submits the bare partition. They go stale only if a
+  partition's limits change — re-run `install.sh` to refresh.
 - **`submit.yml.erb` adds `--gres=gpu:N`** only when GPUs > 0.
 - **`--nv` is decided at session start, on the compute node**, from Slurm's
   GPU-allocation variables (`CUDA_VISIBLE_DEVICES` / `SLURM_JOB_GPUS`) — *not*
@@ -329,15 +220,14 @@ How it works, and why it is built this way:
   [rstudio-img#14](https://github.com/mjz1/rstudio-img/issues/14)).
 
 The same probe is in `r-wrappers.sh`, so `R_`/`Rscript_`/`bash_` also get the GPU
-when run inside a GPU allocation (e.g. `salloc --partition=componc_gpu_int
---gres=gpu:1`).
+when run inside a GPU allocation (e.g. `salloc -p <gpu_partition> --gres=gpu:1`).
 
-Cluster reference: <https://github.mskcc.org/HPC/userdocs>.
-
-## Shell wrappers
+### Shell wrappers
 
 `r-wrappers.sh` provides `R_`, `Rscript_`, `bash_`, and `sync_images` for using
-the same images outside OnDemand. Source it from `~/.alias`:
+the same images outside OnDemand. The installer adds the `source` line to your
+rc file (or tells you it is already there — it follows chains like
+`.bashrc → .alias`); to do it by hand:
 
 ```bash
 source "$HOME/ondemand/dev/rstudio_dev/r-wrappers.sh"
@@ -349,6 +239,7 @@ R_ 4.5                   # a specific R minor
 Rscript_ analysis.R      # arguments are forwarded
 Rscript_ -v 4.5 foo.R    # pin the version
 bash_ -v 4.3             # shell in the container
+sync_images              # check the images (see below)
 ```
 
 `R_`/`Rscript_`/`bash_` default to the newest R that has **both** an image and a
@@ -357,74 +248,85 @@ non-empty package library — deliberately not `latest`, which tracks the newest
 from under an existing script. A missing library is a hard error, never a
 fallback to a different R's library.
 
-## Developing and deploying it
+The wrappers keep the renv cache aligned with sessions: when your shell does not
+export `XDG_CACHE_HOME`, they set it to `$RSTUDIO_WORK_DIR/.cache` inside the
+container, so terminal R and OnDemand R share one package cache instead of
+quietly growing a second one in `$HOME`. An exported value still wins.
 
-**This repo is not the app directory.** Open OnDemand runs whatever sits in
-`~/ondemand/dev/<app>/`; this repo is the source, and installing is a copy.
+## Keeping images current
 
-```
-~/work/repos/rstudio-ood/       the checkout -- edits here are INERT
-        │
-        │  ./install.sh --app-only
-        ▼
-~/ondemand/dev/rstudio_dev/     what OnDemand runs (you, and your lab)
-~/ondemand/dev/rstudio_next/    staging copy, its own entry in the UI
-```
-
-| Command | Use |
-|---|---|
-| `./install.sh` | first-time setup: the interview, config, directories, shell wrappers |
-| `./install.sh --app-only` | routine deploy: push your edits live, touch nothing else |
-| `./install.sh --app-only --app-dir ~/ondemand/dev/rstudio_next --app-name "RStudio Server (next)"` | deploy a staging app |
-
-`--app-only` deliberately skips the interview: redeploying an edit must not be
-able to change your storage or partitions behind your back.
-
-### Testing the ERB templates
-
-The templates are the riskiest files in the app: OnDemand renders them inside the
-PUN, and a mistake in them is not a stack trace but a session that will not start.
-Run the suite before you deploy:
+`sync_images` (the wrapper) forwards to `sync-images.sh` in the app directory —
+the script is not on `PATH`.
 
 ```bash
-./test/run.sh
+sync_images                  # check; on a terminal, offers to pull if stale
+sync_images --sync           # pull whatever is stale (submits an sbatch job)
+sync_images --sync 4.6       # restrict to specific versions
+sync_images --sync --local   # pull inline, when already inside an allocation
+sync_images --watch          # follow the running/submitted sync job's log
+sync_images --image-dir P    # one-off target for THIS run (config unchanged)
+sync_images --manifest       # rebuild images.json from what is on disk
 ```
 
+Every run opens by saying **where it operates** — the image directory, your role
+(maintainer/consumer), the registry — because a sync tool should answer "where
+does this pull to?" before it's asked. (Answer: `RSTUDIO_IMAGE_DIR` from your
+config, never the current directory. `--image-dir` redirects one run for
+experiments; *moving* the images is `install.sh`'s job.) The status table shows
+each image's R/RStudio versions and how long ago it was pulled:
+
 ```
-form.yml.erb
-  ok   DROPS R 4.4: it has an image but no library (a silent R_LIBS_USER loss)
-  ok   a "·" inside a label does not split the entry (commas are the delimiter)
-template/script.sh.erb
-  ok   R_LIBS_USER is derived from the SELECTED image (4.5 image -> 4.5 library)
-  ok   a traversal in the session name is sanitised to one path segment
-  ok   GPU: --nv is gated on Slurm granting a GPU, never on /dev/nvidia*
-submit.yml.erb
-  ok   CPU job: no --gres is emitted
-  ...
-28 passed, 0 failed
+sync-images · /data1/lab/images/rstudio
+  role: maintainer (owner: you) · registry: ghcr.io/mjz1/rstudio-img
+    R     STATUS      DETAIL
+  ✓ 4.5   up to date  R 4.5.3 · RStudio 2026.06.0+242 · pulled 2d ago
+  ! 4.6   STALE       tag moved 9f2c41… -> f24a5d… · pulled 34d ago
+
+  Pull 1 image(s) now (sbatch -> cpushort)? [Y/n]:
 ```
 
-It builds a fixture cluster in a temp directory (images, package libraries,
-config), reproduces OnDemand's binding — `context` for `script.sh.erb`, bare
-locals for `submit.yml.erb` — renders every template, and asserts on the result.
-It then bash-parses the job script the template generates, *and* the rsession
-wrapper that script writes as a heredoc. Nothing real is touched.
+That closing prompt appears only on a terminal, only for a maintainer with
+stale images — scripts, consumers, and the sbatch job itself keep the
+check-only behaviour. If a sync job is already queued or running, every
+invocation says so (with its log path) instead of letting you submit a
+duplicate, and `--watch` attaches to it: state changes, live log, and a fresh
+check when it finishes. Ctrl-C detaches without harming the job.
 
-**"There is no ruby on the cluster" turned out not to be a limit.** This app
-already depends on a container runtime; ruby is a 40 MB image and three seconds
-away. `test/run.sh` uses the host's ruby if it has one (GitHub Actions does) and
-otherwise pulls a container, once. Same tests either way, and CI runs exactly the
-same script.
+The check is three HTTP HEAD requests and belongs anywhere; the pull is ~2 GB
+plus a squashfs build per image, so it goes to Slurm rather than a login node.
+Inside an allocation (`$SLURM_JOB_ID` set) it runs inline on that node instead,
+and the prompt says so.
 
-What the suite still cannot catch: OnDemand-specific binding differences, and
-anything that only shows up against real Slurm. So: **test on the staging app**.
-Deploying a second copy under a different name gives you somewhere to click
-Launch that isn't the app other people are using.
+There is no automation on purpose: the reference cluster has no cron
+(`scrontab` disabled, login-node `crontab` blocked by PAM), and a self-
+resubmitting job was tried and dropped. `rstudio-img` rebuilds its rolling tags
+on the 1st of each month, so running `sync_images` some time after that is
+enough — it will tell you what moved and offer the pull.
 
-This separation exists because the repo *used to be* the sandbox directory:
-`~/ondemand/dev` was the git checkout, so every edit, branch switch and stash was
-instantly live. If you find yourself editing files under `~/ondemand/`, you are
-editing production — `install.sh` warns if you run it from there.
+### Rolling images, and how to roll back
+
+Images roll in place: `rstudio-4.5.sif` is overwritten when the registry's `4.5`
+tag moves. The outgoing build is retained as `rstudio-4.5.sif.prev` (created as
+a hardlink, so it costs no extra disk until the new image lands). To roll back:
+
+```bash
+cd "$RSTUDIO_IMAGE_DIR"
+mv rstudio-4.5.sif.prev rstudio-4.5.sif
+mv rstudio-4.5.sif.prev.digest rstudio-4.5.sif.digest
+sync_images --manifest
+```
+
+`images.json` records the digest, R, RStudio and Quarto versions, and pull time
+of every image, so you can always reconstruct what a given analysis ran under.
+
+**What actually moves between rebuilds.** R's patch version is the *least*
+significant thing here — the package ABI is stable within a minor version, so
+your `4.5_singularity` library keeps working across 4.5.1 → 4.5.2. What moves
+more: the Dockerfile upgrades RStudio Server to the latest stable Posit release
+on every build (one rebuild took it from 2025.09.2 to 2026.06.0), and the
+rocker base pins CRAN to a *dated* snapshot whose date advances when rocker
+rebuilds, shifting every package version in the image's site library. Your
+personal library shadows the site library, which insulates you from most of that.
 
 ## Install in detail
 
@@ -436,6 +338,9 @@ cd rstudio-ood
 ./install.sh --yes       # accept every discovered default, ask nothing
 ./install.sh --help      # every option
 ```
+
+The `curl | bash` one-liner and a checkout run the same script — the one-liner
+just fetches the repo into a temp directory first.
 
 ### Requirements
 
@@ -453,15 +358,35 @@ cd rstudio-ood
 - `python3` (any 3.6+) and standard GNU userland — true of effectively every
   Linux cluster.
 
-The `curl | bash` one-liner and a checkout run the same script — the one-liner
-just fetches the repo into a temp directory first.
+### What it asks you
+
+1. **A large-storage root.** It proposes one it found (`~/work`, `$SCRATCH`,
+   `/data1/*/users/$USER`, …), skipping anything on your home filesystem or
+   that you cannot write to. The three directories default underneath it, and
+   each can be overridden separately. It shows free space for each, and pushes
+   back if your answer is on the home filesystem.
+2. **Whether you maintain images or use someone else's.** If the image directory
+   you name is not writable by you, that answer is made for you — you are a
+   *consumer*, and `sync_images --sync` will decline rather than fail.
+3. **Whether to share your images** with your unix group (`chmod -R g+rX`). If
+   the parent directories block group traversal, it names the offending
+   directories instead of leaving you with a `chmod` that appears to have
+   worked but didn't.
+4. **Cluster and partitions.** The OnDemand cluster id defaults to Slurm's own
+   `ClusterName`. The queue list defaults to *every partition your account may
+   submit to*, each labelled with its GPU type and wall-clock limit.
+5. **Which rc file** gets the `source .../r-wrappers.sh` line (`none` to skip).
+   If the wrappers are already sourced somewhere — including one hop away, as
+   in `.bashrc → .alias` — it says so and touches nothing. Under `--yes` it
+   defaults to `~/.bashrc` for bash users and skips for other shells.
+
+Answer `?` at any prompt for the full explanation of that question.
 
 ### Trying it safely
 
-`--dry-run` is the honest preview: it prints the config it would write and every
-directory it would create, and touches nothing. To go further and run it *for
-real* without disturbing an existing setup, redirect the config and every path it
-writes into a scratch directory:
+`--dry-run` previews everything and changes nothing. To go further and run it
+*for real* without disturbing an existing setup, redirect the config and every
+path it writes into a scratch directory:
 
 ```bash
 T=$(mktemp -d)
@@ -472,28 +397,8 @@ RSTUDIO_DEV_CONFIG=$T/config ./install.sh \
 ```
 
 That exercises the whole thing — discovery, the interview, the config file, the
-deployed app — against `$T`, leaving your real `~/.config/rstudio_dev/config`,
-your OnDemand app and your `~/.bashrc` alone. `rm -rf $T` when you're done.
-
-### What it asks you
-
-1. **A large-storage root.** It proposes one it found (`~/work`, `$SCRATCH`,
-   `/data1/*/users/$USER`, …), skipping anything on your home filesystem. The
-   three directories default underneath it, and each can be overridden
-   separately. It shows free space for each, and pushes back if your answer is on
-   the home filesystem.
-2. **Whether you maintain images or use someone else's.** If the image directory
-   you name is not writable by you, that answer is made for you — you are a
-   *consumer*, and `sync-images.sh --sync` will decline rather than fail.
-3. **Whether to share your images** with your unix group (`chmod g+rx`). If the
-   parent directories block group traversal, it names the offending directories
-   instead of leaving you with a `chmod` that appears to have worked but didn't.
-4. **Cluster and partitions.** The OnDemand cluster id defaults to Slurm's own
-   `ClusterName`. The queue list defaults to *every partition your account may
-   submit to*, each labelled with its GPU type and wall-clock limit.
-5. **Which rc file** gets the `source .../r-wrappers.sh` line (`none` to skip).
-   Under `--yes` this defaults to `~/.bashrc`, and appending there is listed in
-   the plan before it happens.
+deployed app — against `$T`, leaving your real config, OnDemand app and rc file
+alone. `rm -rf $T` when you're done.
 
 ### What it touches
 
@@ -504,16 +409,18 @@ your OnDemand app and your `~/.bashrc` alone. `rm -rf $T` when you're done.
 | `$R_LIBS_ROOT/<ver>_singularity/` | one empty library per R version |
 | `$RSTUDIO_WORK_DIR/{.rstudio-sessions,.cache}/` | session state and caches |
 | `$RSTUDIO_IMAGE_DIR/` | created only if you are the maintainer |
-| `~/.bashrc` (or whatever you chose) | one `source` line |
+| your rc file | one `source` line, only if not already there |
 
 To uninstall: delete the config file and the app directory, and remove that one
 `source` line. Your images, libraries and session state are just directories —
 delete them if you want the disk back.
 
 **What it deliberately does not do:** pull the images (that is a Slurm job — run
-`sync-images.sh --sync` afterwards) or populate your R libraries (they start
-empty). It installs the app and writes the config, then prints the follow-up
-steps.
+`sync_images --sync` afterwards) or populate your R libraries (they start
+empty — install packages from inside RStudio, or `Rscript_ -e
+'install.packages("data.table")'`). An R version with no library directory is
+simply not offered by the form; that is deliberate, since R ignores a missing
+`R_LIBS_USER` silently and every installed package would appear to vanish.
 
 ### Sharing images across a lab
 
@@ -523,7 +430,7 @@ writes to it.
 ```bash
 # maintainer, once
 ./install.sh --image-dir /data1/lab/shared/rstudio --sync --share-images
-sync-images.sh --sync
+sync_images --sync
 
 # everyone else
 ./install.sh --image-dir /data1/lab/shared/rstudio --no-sync
@@ -531,24 +438,22 @@ sync-images.sh --sync
 
 Group read is not enough on its own: every parent directory of the image
 directory also needs `g+x`, or your labmates can see the path and still not open
-anything in it. `install.sh --share-images` opens the directory *and everything
-already in it* (`chmod -R g+rX`), then checks the whole parent chain and names
-any directory that still blocks group traversal.
+anything in it. `--share-images` opens the directory *and everything already in
+it* (`chmod -R g+rX`), then checks the whole parent chain and names any
+directory that still blocks group traversal.
 
 The maintainer's umask cannot break consumers either: `sync-images.sh` sets the
 mode of every `.sif`, `.digest`, `.info` and `images.json` explicitly, so a
-maintainer with `umask 077` still publishes group-readable metadata. (Before
-this, such a maintainer's pulls quietly degraded every consumer's form — no
-version labels, every image reported `UNKNOWN`.)
+maintainer with `umask 077` still publishes group-readable metadata.
 
 ### Another cluster, different partitions
 
 Nothing needs editing. `install.sh` reads `AllowAccounts` / `DenyAccounts` /
 `AllowGroups` off each partition and intersects them with your Slurm
 associations and unix groups, so the Queue dropdown offers what you can actually
-use and nothing else. (This is not cosmetic: on our cluster the shared `cpu`
-partition *denies* most lab accounts, so a hard-coded default of `cpu` produced
-jobs that were rejected at submit time.)
+use and nothing else. (This is not cosmetic: on the reference cluster the shared
+`cpu` partition *denies* most lab accounts, so a hard-coded default of `cpu`
+produced jobs that were rejected at submit time.)
 
 The container binds come from `RSTUDIO_BIND_PATHS`, derived at install time from
 the filesystems your chosen directories actually live on, plus Slurm/munge. A
@@ -568,7 +473,7 @@ Environment variables still take precedence when they are set, so one-off
 overrides work:
 
 ```bash
-RSTUDIO_IMAGE_DIR=/tmp/testimages sync-images.sh
+RSTUDIO_IMAGE_DIR=/tmp/testimages sync_images
 ```
 
 | Key | Meaning | Scope |
@@ -589,27 +494,100 @@ RSTUDIO_IMAGE_DIR=/tmp/testimages sync-images.sh
 Every key has a default that reproduces the previous hard-coded behaviour, so a
 config file written before these keys existed keeps working untouched.
 
-`RSTUDIO_STATE_DIR` is read from the environment only and now defaults to the
-current slot's own state directory (`$RSTUDIO_WORK_DIR/.rstudio-sessions/<slot>/data/rstudio`).
-It exists only to scope the "session did not exit cleanly" reset to one slot; it
-used to point at a shared `~/work/.rstudio`, which is what made launching one
-session clear every other running session's abend flag.
+`RSTUDIO_STATE_DIR` is read from the environment only and defaults to the
+current slot's own state directory
+(`$RSTUDIO_WORK_DIR/.rstudio-sessions/<slot>/data/rstudio`). It exists only to
+scope the "session did not exit cleanly" reset to one slot; it used to point at
+a shared directory, which made launching one session clear every other running
+session's abend flag.
 
-### Your R libraries start empty
+## Developing and deploying it
 
-`install.sh` creates the library directories but installs nothing into them. Fill
-them from inside RStudio, or from a terminal:
+**This repo is not the app directory.** Open OnDemand runs whatever sits in
+`~/ondemand/dev/<app>/`; this repo is the source, and installing is a copy.
+This separation exists because the repo *used to be* the sandbox directory, so
+every edit, branch switch and stash was instantly live. If you find yourself
+editing files under `~/ondemand/`, you are editing production — `install.sh`
+warns if you run it from there.
 
-```bash
-Rscript_ -e 'install.packages("data.table")'
+```
+~/work/repos/rstudio-ood/       the checkout -- edits here are INERT
+        │
+        │  ./install.sh --app-only
+        ▼
+~/ondemand/dev/rstudio_dev/     what OnDemand runs (you, and your lab)
+~/ondemand/dev/rstudio_next/    staging copy, its own entry in the UI
 ```
 
-An R version with **no** library directory is simply not offered by the form.
-That is deliberate: R ignores a missing `R_LIBS_USER` silently, so an image
-offered without a matching library would hand you a session where every package
-you had installed appeared to have vanished.
+| Command | Use |
+|---|---|
+| `./install.sh` | first-time setup: the interview, config, directories, shell wrappers |
+| `./install.sh --app-only` | routine deploy: push your edits live, touch nothing else |
+| `./install.sh --app-only --app-dir ~/ondemand/dev/rstudio_next --app-name "RStudio Server (next)"` | deploy a staging app |
 
-## Running rootless: two things the image needs help with
+`--app-only` deliberately skips the interview: redeploying an edit must not be
+able to change your storage or partitions behind your back. The staging copy
+appears as its own entry in OnDemand, giving you somewhere to click Launch that
+isn't the app other people are using.
+
+### Testing the ERB templates
+
+The templates are the riskiest files in the app: OnDemand renders them inside the
+PUN, and a mistake in them is not a stack trace but a session that will not start.
+Run the suite before you deploy:
+
+```bash
+./test/run.sh
+```
+
+```
+form.yml.erb
+  ok   DROPS R 4.4: it has an image but no library (a silent R_LIBS_USER loss)
+  ok   a "·" inside a label does not split the entry (commas are the delimiter)
+template/script.sh.erb
+  ok   R_LIBS_USER is derived from the SELECTED image (4.5 image -> 4.5 library)
+  ok   a traversal in the session name is sanitised to one path segment
+  ok   GPU: --nv is gated on Slurm granting a GPU, never on /dev/nvidia*
+view.html.erb
+  ok   the password is NEVER the literal string "password"
+  ...
+38 passed, 0 failed
+```
+
+It builds a fixture cluster in a temp directory (images, package libraries,
+config), reproduces OnDemand's binding — `context` for `script.sh.erb`, bare
+locals for `submit.yml.erb` and `view.html.erb` — renders every template, and
+asserts on the result. It then bash-parses the job script the template
+generates, *and* the rsession wrapper that script writes as a heredoc. Nothing
+real is touched.
+
+**"There is no ruby on the cluster" turned out not to be a limit.** This app
+already depends on a container runtime; ruby is a 40 MB image and three seconds
+away. `test/run.sh` uses the host's ruby if it has one (GitHub Actions does) and
+otherwise pulls a container, once. Same tests either way, and CI runs exactly the
+same script.
+
+What the suite still cannot catch: OnDemand-specific binding differences, and
+anything that only shows up against real Slurm. Those need a Launch — on the
+staging app.
+
+### The form discovers images
+
+`form.yml.erb` globs `rstudio-<minor>.sif`, labels each from `images.json`
+(`R 4.6.1 · RStudio 2026.06.0+242`), and offers only versions whose package
+library actually exists. Two consequences:
+
+- Adding an R version upstream needs no edit here. Run `sync_images --sync`.
+- There is **no separate "R packages" dropdown**. The library is a function of
+  the image — packages built for one R minor will not load under another — so
+  `script.sh.erb` derives it. Previously the two were independent selects, and
+  one option pointed at a library directory that did not exist; R ignores a
+  missing `R_LIBS_USER` silently, so that failure was invisible.
+
+(`form.yml.bak` is the retired hard-coded form, kept for reference; OnDemand
+reads `form.yml.erb`.)
+
+### Running rootless: two things the image needs help with
 
 `rstudio-img` reinstalls the RStudio Server deb on top of the rocker base rather
 than letting rocker's `install_rstudio.sh` do it, and does not replay that
@@ -648,9 +626,9 @@ make the images usable rootless.
   `squeue` (jobs are named `rstudio-<slot>`), and a 6000-minute auth window —
   let **any user on the cluster sign into your session and run code as you**.
   The random password is now kept; it reaches the Connect button on its own
-  because `password` is one of OnDemand's default connection params. If idle
+  because `password` is one of OnDemand's default connection params, and the
+  session card shows the credentials for the rare manual sign-in (see
+  [Signing in](#signing-in-there-is-no-password-field-on-purpose)). If idle
   logouts recur, the knob is `--auth-timeout-minutes` in `script.sh.erb`, never
-  the password.
-- `sruni`/`scon` in `~/.alias` hardcode `-p interactive` and `scon`'s
-  `-p|--partition` branch assigns to `time` rather than `partition`. Unrelated
-  to this app, but adjacent.
+  the password. Sessions launched by an older copy of the app keep the weak
+  password until they are relaunched.

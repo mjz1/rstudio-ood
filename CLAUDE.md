@@ -94,6 +94,15 @@ runs on. Concretely, and each of these was a real bug:
   that does not exist.
 - Every config key defaults to the value that used to be hard-coded, so an
   existing install keeps working untouched.
+- **One writer per config key.** install.sh is the only thing that writes
+  `~/.config/rstudio_dev/config`. sync-images' `--image-dir` is deliberately a
+  one-off (and says so): if sync could also rewrite the key, a casual
+  experiment could silently repoint the OnDemand form.
+- Terminal UI (colours, glyphs, step headers) lives in `ui.sh`, sourced by both
+  install.sh and sync-images.sh, degrading to plain text when stderr is not a
+  TTY / NO_COLOR / TERM=dumb, and to ASCII outside UTF-8 locales. Interactive
+  prompts (installer questions, sync's confirm-to-pull) are additionally gated
+  on `/dev/tty`, so scripts and sbatch jobs never see them.
 
 ## Bash gotchas that have bitten us here
 
@@ -106,6 +115,27 @@ runs on. Concretely, and each of these was a real bug:
 - **`stat -c %m` does not follow symlinks.** It reports `/home` for `~/work`
   even when that is a symlink onto `/data1`, which made the storage discovery
   reject the one good answer. `readlink -f` first.
+- **`${var:+NAME=val} cmd` is not an assignment.** Bash decides what is an
+  assignment BEFORE expansion, so text that materialises out of `${:+}` is
+  parsed as the COMMAND ("NAME=val: No such file or directory"). The wrappers'
+  `${cuda_env:+SINGULARITYENV_CUDA=...}` had this bug -- invisible on CPU nodes
+  (empty expansion), fatal on every GPU node, meaning the torch-CUDA hint never
+  worked through `salloc` + `R_` until 2026-07. Conditional env vars go through
+  `env "${array[@]}"`.
+- **`tr ' ' '─'` shreds multibyte glyphs.** tr is byte-wise; build rules by
+  repetition. (ui.sh, shared by install.sh and sync-images.sh, does this
+  correctly -- change it there, not in the callers.)
+- **`pkill -f <pattern>` matches its own command line.** A cleanup like
+  `pkill -f 'script -qec'` kills the shell running it when that string appears
+  in its own argv.
+- **This user's interactive shell often runs INSIDE a Slurm allocation**, so
+  `SLURM_JOB_ID` is set in "ordinary" terminals. Anything gated on "am I in a
+  Slurm job" as a proxy for "am I the batch job" will misfire for humans here
+  -- gate on the precise thing instead (own job id, `--local` flag, or no TTY).
+  This shipped as a bug once: sync-images' confirm prompt never appeared.
+- **`/tmp` is node-local.** An sbatch job's output written to `/tmp/...` lands
+  on the compute node and is unreadable from the login node; test logs go on
+  shared storage (`~/work`).
 
 ## Singularity gotchas that have bitten us
 
@@ -171,6 +201,18 @@ every installed package vanished. `XDG_CONFIG_HOME` is likewise shared
 (`~/.config`) so preferences persist. Only RStudio's session state (under
 `XDG_DATA_HOME/rstudio`) needed isolating. Side effect: packages that store data
 under `XDG_DATA_HOME` (e.g. `SeuratData`) become per-slot.
+
+**The wrappers align with the sessions' cache too.** When the host shell does
+not export `XDG_CACHE_HOME`, `r-wrappers.sh` sets it to
+`$RSTUDIO_WORK_DIR/.cache` inside the container -- otherwise terminal R quietly
+grows a SECOND renv cache in quota'd `$HOME`, disjoint from every package the
+sessions installed (the reference cache is 70 GB; that must never fork). An
+exported value still wins, same precedence as everything else.
+
+**The slot travels to the session card via conn_params.** `submit.yml.erb`
+declares `session_slot`, `before.sh.erb` assigns it (third copy of the
+sanitising -- all three must agree), and `view.html.erb` shows it guarded with
+`defined?` so cards of sessions that predate the param still render.
 
 Works with open-source RStudio Server (no Workbench) because the sessions are
 separate `rserver` processes -- only the filesystem state had to be split. The
