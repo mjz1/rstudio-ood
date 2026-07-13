@@ -192,6 +192,15 @@ check('idle-suspend is disabled (dedicated allocation; suspension only races ren
   sh.include?('session-timeout-minutes=0') &&
     sh.include?('rsession.conf:/etc/rstudio/rsession.conf')
 end
+check('the bound rsession.conf MERGES the image copy (bind masks it; overwrite kills copilot)') do
+  sh.include?('cat /etc/rstudio/rsession.conf') && sh.include?('>> "${TMPDIR}/rsession.conf"')
+end
+check('system-default prefs: no .RData save/restore, start in the work dir') do
+  sh.include?('"save_workspace": "never"') &&
+    sh.include?('"load_workspace": false') &&
+    sh.include?('"initial_working_directory": "${RSTUDIO_WORK_DIR}"') &&
+    sh.include?('export XDG_CONFIG_DIRS="/tmp/xdg:/etc/xdg"')
+end
 check('GPU: --nv is gated on Slurm granting a GPU, never on /dev/nvidia*') do
   # Comments are stripped first: the template *explains* at length why it does not
   # probe /dev/nvidia*, and a naive substring match hits that explanation.

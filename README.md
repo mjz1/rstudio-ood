@@ -81,6 +81,10 @@ puts you straight back in. For the rare manual sign-in, the session card's
 *"Signed out of RStudio? Click here."* shows that session's credentials (only
 you can see them).
 
+Sessions default to **no `.RData` save/restore** (quit and start are instant;
+flip it back in Tools → Global Options if you want the classic behaviour) and
+**start in your work directory** on large storage rather than `$HOME`.
+
 **Multiple sessions.** Run several sessions at once, one per project. The form's
 **Session** dropdown resumes an existing named slot (state persists: open
 documents, console history); **New session name** starts a fresh one. Slots are

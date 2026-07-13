@@ -168,6 +168,10 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   export RSTUDIO_SESSION_SLOT="${SESSION_SLOT}"
   export R_PROFILE="/tmp/site-profile.R"
 
+  # System-default prefs (written to \$TMPDIR/xdg above; \$TMPDIR is bound to
+  # /tmp). Prepended, so /etc/xdg still serves everything else.
+  export XDG_CONFIG_DIRS="/tmp/xdg:/etc/xdg"
+
   # torch: on a GPU job, use the CUDA build matching this node's driver (chosen
   # above). Empty on CPU jobs, so this line vanishes and torch stays CPU.
   ${TORCH_CUDA_EXPORT}
@@ -249,9 +253,33 @@ LOGCONF
 # package versions. End-of-job suspend (SIGTERM) is unaffected, so a slot still
 # resumes across relaunches; after a RELAUNCH resume the same race can still
 # appear once, and Session -> Restart R is the remedy.
-cat > "${TMPDIR}/rsession.conf" <<'RSESSCONF'
+# MERGED with the image's own rsession.conf, not written over it: the bind
+# masks the file inside the SIF, and the image ships real settings there
+# (copilot-enabled etc.) that a plain overwrite would silently disable. Read
+# the image's copy out first, then append ours -- ours last, so we win ties.
+singularity exec "<%= image %>" cat /etc/rstudio/rsession.conf 2>/dev/null > "${TMPDIR}/rsession.conf" || true
+cat >> "${TMPDIR}/rsession.conf" <<'RSESSCONF'
+
+# appended by rstudio-ood script.sh.erb:
 session-timeout-minutes=0
 RSESSCONF
+
+# System-DEFAULT user prefs (each user's own Global Options override these, and
+# their choices persist in ~/.config/rstudio as always). Two HPC-shaped
+# defaults: no .RData workspace save/restore -- multi-GB workspace dumps racing
+# the walltime kill helped nobody, and the reload is the other half of the renv
+# resume race -- and sessions start in the large-storage work dir rather than
+# the quota'd $HOME. Delivered via XDG_CONFIG_DIRS (exported in the rsession
+# wrapper) because the image ships no /etc/rstudio/rstudio-prefs.json to bind
+# over, and a file bind needs an existing target inside a read-only SIF.
+mkdir -p "${TMPDIR}/xdg/rstudio"
+cat > "${TMPDIR}/xdg/rstudio/rstudio-prefs.json" <<PREFS
+{
+  "save_workspace": "never",
+  "load_workspace": false,
+  "initial_working_directory": "${RSTUDIO_WORK_DIR}"
+}
+PREFS
 
 # Clear the "session did not exit cleanly" prompt for THIS slot only. Scoped to
 # the slot's own XDG_DATA_HOME (was ${HOME}/work/.rstudio, which is shared -- so
