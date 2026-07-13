@@ -233,7 +233,10 @@ _row() {  # _row <colour> <glyph> <ver> <status> <detail>
 # Echoes "<jobid> <state> <elapsed>"; empty when none.
 running_sync_job() {
     command -v squeue >/dev/null 2>&1 || return 0
-    squeue -h -u "$USER" -n rstudio-img-sync -o '%i %T %M' 2>/dev/null | head -1
+    # Excluding our OWN job id (not "any job") is what lets a human inside an
+    # salloc still get job-awareness while the sbatch'd sync job never sees
+    # itself and refuses to run.
+    squeue -h -u "$USER" -n rstudio-img-sync -o '%i %T %M' 2>/dev/null         | awk -v me="${SLURM_JOB_ID:-}" '$1 != me' | head -1
 }
 
 # --- commands -----------------------------------------------------------------
@@ -384,7 +387,7 @@ main() {
     # lock; a second submission would just sit on it, so point at the live one
     # instead. --watch attaches to it.
     local running=""
-    if [[ -z ${SLURM_JOB_ID:-} ]] && ! (( force_local )); then
+    if ! (( force_local )); then
         running="$(running_sync_job)"
         if [[ -n $running ]]; then
             set -- $running
@@ -419,9 +422,12 @@ main() {
     # fix them -- the friendly entrypoint. Everything non-interactive (scripts,
     # the sbatch job itself, consumers) keeps the check-only behaviour.
     if ! (( do_sync )) && (( ${#STALE[@]} )) && [[ -z $running ]] \
-       && [[ $SYNC_ROLE != consumer && -w $IMAGE_DIR && -z ${SLURM_JOB_ID:-} ]] && _tty; then
-        local reply
-        read -r -p "  Pull ${#STALE[@]} image(s) now (sbatch -> $SBATCH_PARTITION)? [Y/n]: " reply </dev/tty
+       && [[ $SYNC_ROLE != consumer && -w $IMAGE_DIR ]] && _tty; then
+        local reply how="sbatch -> $SBATCH_PARTITION"
+        # Inside an allocation the pull runs right here (see the branch below);
+        # the prompt must not promise an sbatch that will not happen.
+        [[ -n ${SLURM_JOB_ID:-} ]] && how="inline, on this node"
+        read -r -p "  Pull ${#STALE[@]} image(s) now ($how)? [Y/n]: " reply </dev/tty
         [[ -z ${reply:-} || $reply =~ ^[Yy] ]] && do_sync=1
     fi
     (( do_sync )) || return 0
