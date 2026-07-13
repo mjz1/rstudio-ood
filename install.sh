@@ -381,9 +381,11 @@ usage() {
     cat <<'EOF'
 Usage: ./install.sh [options]
 
-Every option below is asked for interactively when omitted. Nothing is
-hard-coded to a particular user, lab, or cluster: storage is discovered from the
-mount table and partitions from Slurm's ACLs.
+Every option below is asked for interactively when omitted, and answering `?`
+at any prompt explains that question in full. Nothing is hard-coded to a
+particular user, lab, or cluster: storage is discovered from the mount table
+and partitions from Slurm's ACLs. `--dry-run` previews everything and changes
+nothing.
 
   Storage (these grow to tens of GB -- keep them OFF your home filesystem)
   --storage-root PATH     Large-storage root the three directories default under
