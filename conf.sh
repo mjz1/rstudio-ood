@@ -21,9 +21,14 @@ _rsd_load_conf() {
         [ "$key" != "$line" ] || continue        # no '=' on the line
         key="${key//[[:space:]]/}"
 
+        # Allowlist: the config file is data, never evaluated, so an unknown or
+        # malicious key is ignored rather than becoming a variable. Keep this in
+        # step with what install.sh writes.
         case "$key" in
-            RSTUDIO_IMAGE_DIR|R_LIBS_ROOT|RSTUDIO_VERSIONS|RSTUDIO_CLUSTER|RSTUDIO_QUEUE|RSTUDIO_SYNC_PARTITION|RSTUDIO_TORCH_CUDA) ;;
-            *) continue ;;                       # ignore unknown keys, don't eval them
+            RSTUDIO_IMAGE_DIR|R_LIBS_ROOT|RSTUDIO_WORK_DIR|RSTUDIO_BIND_PATHS) ;;
+            RSTUDIO_VERSIONS|RSTUDIO_SYNC_ROLE|RSTUDIO_SINGULARITY) ;;
+            RSTUDIO_CLUSTER|RSTUDIO_QUEUE|RSTUDIO_QUEUES|RSTUDIO_SYNC_PARTITION|RSTUDIO_TORCH_CUDA) ;;
+            *) continue ;;
         esac
 
         # Only adopt the file's value if the variable is not already set.
@@ -35,3 +40,22 @@ _rsd_load_conf() {
 }
 
 _rsd_load_conf
+
+# Defaults for installs that predate these keys: the historical hard-coded
+# behaviour, so an old config file keeps working untouched.
+: "${RSTUDIO_WORK_DIR:=$HOME/work}"
+: "${RSTUDIO_SINGULARITY:=singularity}"
+: "${RSTUDIO_BIND_PATHS:=/data1,/run/munge,/etc/slurm,/usr/lib64/slurm,/usr/lib64/libmunge.so.2}"
+
+# Echo `-B <path>` arguments for each configured bind path that actually exists
+# on THIS machine. A bind path that is missing makes singularity fail outright,
+# so a site without /data1 (or a compute node without munge) must not inherit
+# another site's list. `IFS=,` is a prefix assignment to `read` alone, so it does
+# not leak into callers -- unlike `local IFS`, which is dynamically scoped.
+_rsd_bind_args() {
+    local b arr=()
+    IFS=',' read -r -a arr <<<"${RSTUDIO_BIND_PATHS:-}"
+    for b in "${arr[@]}"; do
+        [ -n "$b" ] && [ -e "$b" ] && printf '%s\n%s\n' "-B" "$b"
+    done
+}

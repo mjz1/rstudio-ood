@@ -113,6 +113,13 @@ _r_exec() {   # _r_exec <sif> <libs> <cmd> [args...]
         fi
     fi
 
+    # Host paths bound into the container come from RSTUDIO_BIND_PATHS (config),
+    # not a hard-coded /data1: the storage a user's images and libraries live on
+    # is site-specific, and a bind path that does not exist makes singularity
+    # fail outright. _rsd_bind_args filters to what exists here.
+    local -a binds=()
+    mapfile -t binds < <(_rsd_bind_args)
+
     # This host exports SSL_CERT_FILE/SSL_CERT_DIR pointing at /etc/pki (RHEL),
     # and Singularity forwards them into the Ubuntu container where those paths
     # do not exist. OpenSSL-based TLS then fails -- Quarto (Deno) reports
@@ -122,9 +129,8 @@ _r_exec() {   # _r_exec <sif> <libs> <cmd> [args...]
     SINGULARITYENV_SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     SINGULARITYENV_SSL_CERT_DIR=/etc/ssl/certs \
     ${cuda_env:+SINGULARITYENV_CUDA="$cuda_env"} \
-    singularity exec ${nv} \
-        -B "/data1:/data1" \
-        -B "/run/munge/,/etc/slurm/,/usr/lib64/slurm,/usr/lib64/libmunge.so.2" \
+    "${RSTUDIO_SINGULARITY:-singularity}" exec ${nv} \
+        "${binds[@]}" \
         -B "$HOME:$HOME" \
         "$sif" \
         bash -c 'echo "slurm:x:300:300::/opt/slurm/slurm:/bin/false" >> /etc/passwd 2>/dev/null || true

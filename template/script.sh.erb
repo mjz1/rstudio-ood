@@ -34,9 +34,24 @@
     conf
   end.call
 
-  r_libs_root = ENV['R_LIBS_ROOT'] || rsd_conf['R_LIBS_ROOT'] ||
-                "#{Dir.home}/work/R/x86_64-pc-linux-gnu-library"
+  setting = lambda { |key, default| ENV[key] || rsd_conf[key] || default }
+
+  r_libs_root = setting.call('R_LIBS_ROOT', "#{Dir.home}/work/R/x86_64-pc-linux-gnu-library")
   r_libs      = File.join(r_libs_root, "#{r_minor}_singularity")
+
+  # Session state and caches live under RSTUDIO_WORK_DIR, chosen at install time.
+  # The default reproduces the old hard-coded ~/work, so an install that predates
+  # the key keeps its existing slots.
+  work_dir    = setting.call('RSTUDIO_WORK_DIR', "#{Dir.home}/work")
+
+  # Host paths bound into the container beyond $HOME. Site-specific (this cluster
+  # has /data1; another will not), so they are configured rather than hard-coded.
+  # Emitted as a bash list and filtered against what exists on the compute node --
+  # singularity fails outright on a bind source that is not there.
+  singularity = setting.call('RSTUDIO_SINGULARITY', 'singularity')
+  bind_paths  = setting.call('RSTUDIO_BIND_PATHS',
+                             '/data1,/run/munge,/etc/slurm,/usr/lib64/slurm,/usr/lib64/libmunge.so.2')
+                  .split(',').map(&:strip).reject(&:empty?)
 -%>
 
 # Load the required environment
@@ -110,8 +125,10 @@ fi
 # quota. The slot dir persists, so a slot resumes and shows in the Session
 # dropdown.
 SESSION_SLOT="<%= slot %>"
-SLOT_DIR="${HOME}/work/.rstudio-sessions/${SESSION_SLOT}"
-mkdir -p "${SLOT_DIR}/data" "${HOME}/work/.cache"
+RSTUDIO_WORK_DIR="<%= work_dir %>"
+SLOT_DIR="${RSTUDIO_WORK_DIR}/.rstudio-sessions/${SESSION_SLOT}"
+SHARED_CACHE="${RSTUDIO_WORK_DIR}/.cache"
+mkdir -p "${SLOT_DIR}/data" "${SHARED_CACHE}"
 echo "RStudio session slot: ${SESSION_SLOT}  (state in ${SLOT_DIR}/data; cache + renv shared)"
 
 # Generate an `rsession` wrapper script
@@ -132,7 +149,7 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # R_user_dir("renv","cache") == \$XDG_CACHE_HOME/R/renv -- so a per-slot cache
   # moves every renv project's library out from under it (.libPaths breaks).
   # XDG_CONFIG_HOME is likewise left at ~/.config so preferences stay shared.
-  export XDG_CACHE_HOME="${HOME}/work/.cache/"
+  export XDG_CACHE_HOME="${SHARED_CACHE}"
 
   # Session signifier: expose the slot to R, and load a site profile that shows
   # it (see the site-profile.R written below). R_PROFILE is the SITE profile, so
@@ -233,19 +250,34 @@ export RSTUDIO_USER="${USER}"
 # NV_FLAG and the torch CUDA build were decided earlier (before the rsession
 # wrapper was written, so the CUDA choice could be exported into the R session).
 
+# Host paths to bind, from RSTUDIO_BIND_PATHS (config) rather than a hard-coded
+# /data1: the storage that holds a user's images, libraries and data is
+# site-specific. Each is skipped if absent on this node, because singularity
+# aborts on a bind source that does not exist -- so one config can serve nodes
+# that differ, and a site without /data1 does not inherit ours.
+BIND_ARGS=()
+<%- unless bind_paths.empty? -%>
+for _b in <%= bind_paths.map { |p| "'#{p}'" }.join(' ') %>; do
+  if [ -e "${_b}" ]; then
+    BIND_ARGS+=(-B "${_b}:${_b}")
+  else
+    echo "bind path not present on this node, skipping: ${_b}"
+  fi
+done
+<%- end -%>
+
 # Singularity forwards the host environment into the container, and this host
 # exports SSL_CERT_FILE=/etc/pki/... and SSL_CERT_DIR=/etc/pki/... -- RHEL paths
 # that do not exist inside the Ubuntu image. Anything doing TLS with OpenSSL
 # then fails; Quarto (Deno) dies with "Failed to load platform certificates".
 # Point them at the container's own CA bundle rather than using --cleanenv,
 # which would also strip SLURM_* and the RStudio variables we rely on.
-singularity exec ${NV_FLAG} -B "$TMPDIR:/tmp" \
+<%= singularity %> exec ${NV_FLAG} -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/run:/run" \
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
  -B "$TMPDIR/local-share-rstudio:/home/rstudio/.local/share/rstudio" \
  -B "$TMPDIR/logging.conf:/etc/rstudio/logging.conf" \
- -B "/data1:/data1" \
- -B "/run/munge/,/etc/slurm/,/usr/lib64/slurm,/usr/lib64/libmunge.so.2" \
+ "${BIND_ARGS[@]}" \
  -B "${HOME}:${HOME}" \
  --env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
  --env SSL_CERT_DIR=/etc/ssl/certs \

@@ -42,6 +42,7 @@
 
   image_dir   = setting.call('RSTUDIO_IMAGE_DIR', "#{Dir.home}/work/images/rstudio")
   r_libs_root = setting.call('R_LIBS_ROOT',       "#{Dir.home}/work/R/x86_64-pc-linux-gnu-library")
+  work_dir    = setting.call('RSTUDIO_WORK_DIR',  "#{Dir.home}/work")
   cluster     = setting.call('RSTUDIO_CLUSTER',   'iris')
   queue       = setting.call('RSTUDIO_QUEUE',     'cpu')
 
@@ -97,7 +98,10 @@
   # without colliding, and each slot's RStudio state persists across relaunches.
   # Discover existing slots here so the form can offer them for resume, newest
   # first, with a last-used hint from the directory mtime.
-  slots_root = File.join(Dir.home, 'work', '.rstudio-sessions')
+  # Slots live under RSTUDIO_WORK_DIR (config), not a hard-coded ~/work: that
+  # directory grows, so it belongs on whatever large storage the user chose at
+  # install time. script.sh.erb creates the slots in the same place.
+  slots_root = File.join(work_dir, '.rstudio-sessions')
   ago = lambda do |t|
     s = Time.now - t
     next 'just now'          if s < 60

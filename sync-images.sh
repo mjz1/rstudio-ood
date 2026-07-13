@@ -17,11 +17,15 @@
 # `rstudio-<ver>.sif.prev` (a hardlink, so it costs no extra disk until the new
 # image lands). Rollback is therefore a rename, not a re-pull.
 #
-# Configuration, all overridable from the environment:
+# Configuration comes from ~/.config/rstudio_dev/config (written by install.sh);
+# the environment overrides it. The keys that matter here:
 #
-#   RSTUDIO_IMAGE_DIR   where .sif files live         (shared artifact)
+#   RSTUDIO_IMAGE_DIR   where .sif files live          (shared artifact)
 #   R_LIBS_ROOT         where R package libraries live (per-user)
 #   RSTUDIO_VERSIONS    space-separated R minor versions to track
+#   RSTUDIO_WORK_DIR    holds the container pull cache (.cache/singularity)
+#   RSTUDIO_SYNC_ROLE   maintainer = may pull; consumer = read-only, --sync refused
+#   RSTUDIO_SINGULARITY container runtime (singularity | apptainer)
 #
 set -euo pipefail
 
@@ -32,6 +36,9 @@ set -euo pipefail
 
 IMAGE_DIR="${RSTUDIO_IMAGE_DIR:-$HOME/work/images/rstudio}"
 R_LIBS_ROOT="${R_LIBS_ROOT:-$HOME/work/R/x86_64-pc-linux-gnu-library}"
+WORK_DIR="${RSTUDIO_WORK_DIR:-$HOME/work}"
+SINGULARITY="${RSTUDIO_SINGULARITY:-singularity}"
+SYNC_ROLE="${RSTUDIO_SYNC_ROLE:-maintainer}"
 GHCR_REPO="${RSTUDIO_GHCR_REPO:-mjz1/rstudio-img}"
 DOCKER_REPO="${RSTUDIO_DOCKER_REPO:-zatzmanm/rstudio}"
 KEEP_PREV="${RSTUDIO_KEEP_PREV:-1}"
@@ -91,9 +98,9 @@ short() { printf '%.19s…' "${1#sha256:}"; }
 # rocker's base carries OCI labels and R/RStudio/Quarto each report a version.
 introspect() {
     local sif="$1" r rstudio quarto
-    r=$(singularity exec "$sif" R --version 2>/dev/null | sed -nE '1s/^R version ([0-9.]+).*/\1/p') || true
-    rstudio=$(singularity exec "$sif" rstudio-server version 2>/dev/null | awk 'NR==1{print $1}') || true
-    quarto=$(singularity exec "$sif" quarto --version 2>/dev/null | head -1) || true
+    r=$("$SINGULARITY" exec "$sif" R --version 2>/dev/null | sed -nE '1s/^R version ([0-9.]+).*/\1/p') || true
+    rstudio=$("$SINGULARITY" exec "$sif" rstudio-server version 2>/dev/null | awk 'NR==1{print $1}') || true
+    quarto=$("$SINGULARITY" exec "$sif" quarto --version 2>/dev/null | head -1) || true
     printf '%s\t%s\t%s\n' "${r:-unknown}" "${rstudio:-unknown}" "${quarto:-unknown}"
 }
 
@@ -120,11 +127,11 @@ pull_one() { # pull_one <ver> <digest> <repo-ref>
     # The 8 GB directory literally named '~' in the image dir came from an
     # unexpanded tilde here. Set it explicitly, and skip the blob cache
     # entirely: it doubles peak disk for images we pull once a month.
-    export SINGULARITY_CACHEDIR="${SINGULARITY_CACHEDIR:-$HOME/work/.cache/singularity}"
+    export SINGULARITY_CACHEDIR="${SINGULARITY_CACHEDIR:-$WORK_DIR/.cache/singularity}"
     mkdir -p "$SINGULARITY_CACHEDIR"
 
     log "==> R $ver: pulling $ref@$(short "$digest")"
-    singularity pull --disable-cache "$tmp" "docker://${ref}@${digest}" >&2
+    "$SINGULARITY" pull --disable-cache "$tmp" "docker://${ref}@${digest}" >&2
 
     local info r_full rstudio quarto
     info=$(introspect "$tmp")
@@ -250,7 +257,10 @@ sync_sbatch() {
     log "  watch: squeue -j $jid"
 }
 
-usage() { sed -n '2,28p' "$SELF" | sed 's/^#\s\?//'; }
+# Print the header comment as the help text: everything from line 2 up to the
+# first non-comment line. (A hard-coded line range silently truncates the moment
+# someone adds a line to the header.)
+usage() { awk 'NR==1{next} /^#/{sub(/^#[[:space:]]?/,""); print; next} {exit}' "$SELF"; }
 
 main() {
     local do_sync=0 force_local=0 do_manifest=0
@@ -270,7 +280,20 @@ main() {
     (( ${#want[@]} )) && VERSIONS=("${want[@]}")
 
     [[ -d $IMAGE_DIR ]] || die "image dir not found: $IMAGE_DIR"
-    command -v singularity >/dev/null || die "singularity not on PATH"
+    command -v "$SINGULARITY" >/dev/null || die "$SINGULARITY not on PATH"
+
+    # Checking is safe for everyone; pulling is not. Someone using a colleague's
+    # image directory has no business writing to it, and finding that out as a
+    # permission-denied error halfway through a 2 GB pull (on a compute node,
+    # in a log they have to go and find) helps nobody. Say it up front.
+    if (( do_sync )); then
+        if [[ $SYNC_ROLE == consumer ]]; then
+            die "config says you are a CONSUMER of $IMAGE_DIR (maintained by $(stat -c '%U' "$IMAGE_DIR" 2>/dev/null || echo 'someone else')).
+       Ask them to run --sync, or re-run install.sh with --sync and your own --image-dir."
+        fi
+        [[ -w $IMAGE_DIR ]] || die "cannot write to $IMAGE_DIR (owned by $(stat -c '%U' "$IMAGE_DIR" 2>/dev/null || echo '?')).
+       Re-run install.sh and choose an image directory you own, or ask the owner to sync."
+    fi
 
     # Covers `die` inside pull_one, which exits rather than returning.
     trap 'rm -f "$IMAGE_DIR"/.rstudio-*.'"$$"'.partial.sif' EXIT

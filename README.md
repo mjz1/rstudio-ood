@@ -28,15 +28,28 @@ sidecar recording the registry manifest digest it was pulled from, so
 `sync-images.sh` can detect drift with three HTTP HEAD requests instead of a
 4 GB download.
 
-### Shared vs per-user
+### The three directories, and why they are not in your home
 
-| Thing | Path | Scope |
-|---|---|---|
-| Container images | `$RSTUDIO_IMAGE_DIR` (default `~/work/images/rstudio`) | shared artifact |
-| R package libraries | `$R_LIBS_ROOT/<minor>_singularity` | **per-user** |
+Everything this app stores on disk lands in one of three places. All three grow,
+and `install.sh` asks you where each one goes — because an HPC home directory is
+small, quota'd and shared, and filling it breaks your logins, not just RStudio.
 
-If you are reusing this app, the images can be shared but the R libraries cannot
-— see [Reusing this setup](#reusing-this-setup).
+| Directory | Config key | Holds | Grows to | Shareable? |
+|---|---|---|---|---|
+| Images | `RSTUDIO_IMAGE_DIR` | `rstudio-<ver>.sif` + digests + `images.json` | ~2 GB per R version, doubled while the previous build is kept — **16–32 GB** for four | **Yes** — one directory can serve a whole lab |
+| R libraries | `R_LIBS_ROOT` | one `<ver>_singularity` directory per R minor version | unbounded; `libtorch` alone is ~6 GB **per R version** | **No** |
+| Work dir | `RSTUDIO_WORK_DIR` | `.rstudio-sessions/<slot>` (session state), `.cache` (renv library + cache, container pull cache) | tens of GB | **No** |
+
+The images are the only thing that *can* be shared, and they are identical for
+everyone — so one person maintains a directory and everyone else reads it. The R
+libraries cannot be shared: packages are compiled against a specific R minor
+version and installed into a directory you own. See
+[Reusing this setup](#reusing-this-setup).
+
+`install.sh` warns if any of the three lands on your home filesystem — including
+under `--yes`, which is the run where nobody was asked anything. It decides by
+comparing mount points, not by matching path prefixes, so a `~/work` symlink onto
+large storage is correctly recognised as fine.
 
 ## Keeping images current
 
@@ -52,6 +65,12 @@ The check is cheap and the pull is not — roughly 4 GB plus a squashfs build pe
 image — so `--sync` submits the pull to Slurm rather than running it on a login
 node. If `$SLURM_JOB_ID` is set it runs inline instead, on the assumption you
 are already on a compute node.
+
+**If you use someone else's image directory you never run `--sync`.** Checking is
+safe for anyone; pulling needs write access. `install.sh` records which you are
+(`RSTUDIO_SYNC_ROLE`), and `--sync` refuses up front with an explanation rather
+than failing with permission-denied halfway through a 2 GB pull, inside a Slurm
+job, in a log you would have to go and find.
 
 This cluster has **no cron available**: `scrontab` is disabled and login-node
 `crontab` is blocked by PAM. Sync is therefore a manual step. Since
@@ -117,15 +136,16 @@ Sessions are now isolated by a **named slot**:
   first, with a "last used" hint) — pick one to resume its state — plus a **New
   session name** field to start a fresh named slot.
 - Each slot gets its own `XDG_DATA_HOME` under
-  `~/work/.rstudio-sessions/<slot>/data`, so concurrent sessions never touch each
-  other's open documents, console history, or session registry. Slots live under
-  `~/work` (a symlink to `/data1`), **not your space-limited `$HOME`**.
-- **The cache and preferences stay shared.** `XDG_CACHE_HOME` (`~/work/.cache`)
-  is deliberately *not* per-slot — renv keeps its package library there
-  (`$XDG_CACHE_HOME/R/renv`), so isolating it would move every project's library
-  out from under `.libPaths()`. `XDG_CONFIG_HOME` (`~/.config`) is shared too, so
-  themes/keybindings/settings and your R package library are consistent across
-  sessions.
+  `$RSTUDIO_WORK_DIR/.rstudio-sessions/<slot>/data`, so concurrent sessions never
+  touch each other's open documents, console history, or session registry. Slots
+  live in the work directory you picked at install time — on large storage,
+  **not your space-limited `$HOME`**.
+- **The cache and preferences stay shared.** `XDG_CACHE_HOME`
+  (`$RSTUDIO_WORK_DIR/.cache`) is deliberately *not* per-slot — renv keeps its
+  package library there (`$XDG_CACHE_HOME/R/renv`), so isolating it would move
+  every project's library out from under `.libPaths()`. `XDG_CONFIG_HOME`
+  (`~/.config`) is shared too, so themes/keybindings/settings and your R package
+  library are consistent across sessions.
 - Slot state **persists**, so a slot resumes where you left it. The Slurm job is
   named `rstudio-<slot>` so concurrent sessions are distinguishable in `squeue`.
 - **Note:** packages that cache *data* under `XDG_DATA_HOME` (e.g. `SeuratData`)
@@ -175,17 +195,23 @@ one-time re-download: `torch::install_torch(reinstall = TRUE)` then restart R.
 
 How it works, and why it is built this way:
 
-- **The Queue dropdown is populated from `RSTUDIO_QUEUES`** (comma-separated, set
-  by `install.sh`/config). GPU partitions are **site- and account-specific** —
-  on this cluster the shared `gpu` partition *denies* the `shahs3` account, while
-  `componc_gpu_batch` / `componc_gpu_int` allow it — so they are configured, not
-  hard-coded. Set yours accordingly; see [Reusing this setup](#reusing-this-setup).
+- **The Queue dropdown is populated from `RSTUDIO_QUEUES`**, which `install.sh`
+  *discovers* rather than asking you to type: it reads each partition's
+  `AllowAccounts` / `DenyAccounts` / `AllowGroups` and keeps the ones your Slurm
+  associations and unix groups actually permit. GPU partitions are site- and
+  account-specific — on this cluster the shared `gpu` partition *denies* the
+  `shahs3` account while `componc_gpu_batch` / `componc_gpu_int` allow it — so a
+  hard-coded list is wrong for everyone but its author.
 - **Each option is labelled with its GPU type and time limit**, so you know what
   you are picking — e.g. `componc_gpu_int — GPU H100/H200 · <=1d · interactive`.
-  `install.sh` generates these from Slurm (`scontrol`/`sinfo`) at install time,
-  on a login node, and stores them in `RSTUDIO_QUEUES` as `partition|label`
-  entries; the form just displays them and submits the bare partition. Labels go
-  stale only if a partition's limits change — re-run `install.sh` to refresh.
+  A partition counts as GPU when **every** node in it offers a GPU — not when
+  *some* node does, which is true of the CPU partitions too (`cpushort` has 34
+  GPU nodes among 235) and would label everything "GPU", and not from its name,
+  which is a naming convention rather than a fact. `install.sh` generates the
+  labels from Slurm at install time, on a login node, and stores them in
+  `RSTUDIO_QUEUES` as `partition|label` entries; the form just displays them and
+  submits the bare partition. Labels go stale only if a partition's limits change
+  — re-run `install.sh` to refresh.
   You never type the label: `--queues` takes bare partition names.
 - **`submit.yml.erb` adds `--gres=gpu:N`** only when GPUs > 0.
 - **`--nv` is decided at session start, on the compute node**, from Slurm's
@@ -234,45 +260,105 @@ fallback to a different R's library.
 
 ## Reusing this setup
 
+Nothing in this app is hard-coded to one person, lab or cluster. `install.sh`
+asks you where things go and discovers the rest from the machine it runs on: the
+mount table tells it which storage is large, and Slurm's partition ACLs tell it
+which queues *your* account may actually submit to.
+
 Install straight from the internet — no checkout needed:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mjz1/openondemandapps/master/rstudio_dev/install.sh | bash
 ```
 
-That runs interactively (it reads your answers from the terminal even though the
-script arrives over the pipe). To skip the prompts and pass options, add
-`bash -s --`:
+That runs the interview (it reads your answers from the terminal even though the
+script arrives over the pipe). `--dry-run` shows exactly what it would do and
+changes nothing; `--yes` accepts every discovered default without asking.
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/mjz1/openondemandapps/master/rstudio_dev/install.sh \
-  | bash -s -- --yes \
-      --image-dir /home/zatzmanm/work/images/rstudio \
-      --queue componc_cpu \
-      --queues componc_cpu,componc_gpu_batch,componc_gpu_int
-```
-
-`install.sh` creates your R package libraries, installs the app under
-`~/ondemand/dev/`, writes `~/.config/rstudio_dev/config`, and offers to source
-the shell wrappers from your `~/.bashrc`. Every answer has a sensible default;
-`--dry-run` shows what it would do without touching anything.
-
-**What it does not do**, because it can't: sync the ~16 GB of images (run
-`sync-images.sh --sync` after), populate your R libraries (they start empty), or
-know your account's GPU partitions (pass them via `--queues`). It installs the
-app and writes config — the fast part — and prints the follow-up steps.
-
-Prefer a checkout (for development, or `--link`):
+Prefer a checkout for development, or for `--link`:
 
 ```bash
 git clone https://github.com/mjz1/openondemandapps.git
 cd openondemandapps/rstudio_dev
-./install.sh                                      # interactive
-./install.sh --link                               # symlink instead of copy (needs a checkout)
-./install.sh --help                               # all options
+./install.sh --dry-run   # see the plan
+./install.sh             # interactive
+./install.sh --link      # symlink the app instead of copying it
+./install.sh --help      # every option
 ```
 
-Both paths run the same `install.sh`; the one-liner just fetches the repo first.
+### What it asks you
+
+1. **A large-storage root.** It proposes one it found (`~/work`, `$SCRATCH`,
+   `/data1/*/users/$USER`, …), skipping anything on your home filesystem. The
+   three directories default underneath it, and each can be overridden
+   separately. It shows free space for each, and pushes back if your answer is on
+   the home filesystem.
+2. **Whether you maintain images or use someone else's.** If the image directory
+   you name is not writable by you, that answer is made for you — you are a
+   *consumer*, and `sync-images.sh --sync` will decline rather than fail.
+3. **Whether to share your images** with your unix group (`chmod g+rx`). If the
+   parent directories block group traversal, it names the offending directories
+   instead of leaving you with a `chmod` that appears to have worked but didn't.
+4. **Cluster and partitions.** The OnDemand cluster id defaults to Slurm's own
+   `ClusterName`. The queue list defaults to *every partition your account may
+   submit to*, each labelled with its GPU type and wall-clock limit.
+5. **Which rc file** gets the `source .../r-wrappers.sh` line (`none` to skip).
+   Under `--yes` this defaults to `~/.bashrc`, and appending there is listed in
+   the plan before it happens.
+
+### What it touches
+
+| Path | What |
+|---|---|
+| `~/.config/rstudio_dev/config` | every setting; **delete this to uninstall** |
+| `~/ondemand/dev/rstudio_dev/` | the OnDemand app (copied, or symlinked with `--link`) |
+| `$R_LIBS_ROOT/<ver>_singularity/` | one empty library per R version |
+| `$RSTUDIO_WORK_DIR/{.rstudio-sessions,.cache}/` | session state and caches |
+| `$RSTUDIO_IMAGE_DIR/` | created only if you are the maintainer |
+| `~/.bashrc` (or whatever you chose) | one `source` line |
+
+To uninstall: delete the config file and the app directory, and remove that one
+`source` line. Your images, libraries and session state are just directories —
+delete them if you want the disk back.
+
+**What it deliberately does not do:** pull the images (that is a Slurm job — run
+`sync-images.sh --sync` afterwards) or populate your R libraries (they start
+empty). It installs the app and writes the config, then prints the follow-up
+steps.
+
+### Sharing images across a lab
+
+One person maintains the image directory; everyone else points at it and never
+writes to it.
+
+```bash
+# maintainer, once
+./install.sh --image-dir /data1/lab/shared/rstudio --sync --share-images
+sync-images.sh --sync
+
+# everyone else
+./install.sh --image-dir /data1/lab/shared/rstudio --no-sync
+```
+
+Group read is not enough on its own: every parent directory of the image
+directory also needs `g+x`, or your labmates can see the path and still not open
+anything in it. `install.sh --share-images` checks the whole chain and tells you
+which directories block it.
+
+### Another cluster, different partitions
+
+Nothing needs editing. `install.sh` reads `AllowAccounts` / `DenyAccounts` /
+`AllowGroups` off each partition and intersects them with your Slurm
+associations and unix groups, so the Queue dropdown offers what you can actually
+use and nothing else. (This is not cosmetic: on our cluster the shared `cpu`
+partition *denies* most lab accounts, so a hard-coded default of `cpu` produced
+jobs that were rejected at submit time.)
+
+The container binds come from `RSTUDIO_BIND_PATHS`, derived at install time from
+the filesystems your chosen directories actually live on, plus Slurm/munge. A
+bind path that does not exist on a compute node is skipped at session start
+rather than aborting the launch — so a site with no `/data1` does not inherit
+ours.
 
 ### Configuration
 
@@ -293,32 +379,39 @@ RSTUDIO_IMAGE_DIR=/tmp/testimages sync-images.sh
 |---|---|---|
 | `RSTUDIO_IMAGE_DIR` | where the `.sif` images live | shared, read-only is fine |
 | `R_LIBS_ROOT` | root of your R package libraries | **per-user** |
+| `RSTUDIO_WORK_DIR` | session slots (`.rstudio-sessions/`) and caches (`.cache/`, incl. the renv library) | **per-user** |
+| `RSTUDIO_BIND_PATHS` | comma-separated host paths bound into the container beyond `$HOME`; missing ones are skipped at session start | site |
+| `RSTUDIO_SYNC_ROLE` | `maintainer` (may pull images) or `consumer` (read-only; `--sync` refuses) | per-user |
 | `RSTUDIO_VERSIONS` | R minor versions to track when syncing | per-user |
-| `RSTUDIO_CLUSTER` | OnDemand cluster id (`/etc/ood/config/clusters.d`) | site |
+| `RSTUDIO_SINGULARITY` | container runtime (`singularity` or `apptainer`) | site |
+| `RSTUDIO_CLUSTER` | OnDemand cluster id (`/etc/ood/config/clusters.d` **on the web node**) | site |
 | `RSTUDIO_QUEUE` | default Slurm partition, pre-selected in the dropdown | site |
 | `RSTUDIO_QUEUES` | comma-separated partitions in the Queue dropdown, incl. GPU ones; each entry is `partition` or `partition\|label` (install.sh auto-labels with GPU type + time limit); falls back to `RSTUDIO_QUEUE` if unset | site |
 | `RSTUDIO_SYNC_PARTITION` | partition `sync-images.sh` submits pulls to | site |
 | `RSTUDIO_TORCH_CUDA` | space-separated R-torch CUDA builds, highest first (default `12.9 12.8 12.6`); the session picks the highest that fits the node driver | site |
 
-`RSTUDIO_STATE_DIR` (default `~/work/.rstudio`) holds RStudio session state and
-is read from the environment only.
+Every key has a default that reproduces the previous hard-coded behaviour, so a
+config file written before these keys existed keeps working untouched.
 
-### What can and cannot be shared
+`RSTUDIO_STATE_DIR` is read from the environment only and now defaults to the
+current slot's own state directory (`$RSTUDIO_WORK_DIR/.rstudio-sessions/<slot>/data/rstudio`).
+It exists only to scope the "session did not exit cleanly" reset to one slot; it
+used to point at a shared `~/work/.rstudio`, which is what made launching one
+session clear every other running session's abend flag.
 
-The **images can be shared**; point everyone's `RSTUDIO_IMAGE_DIR` at one
-directory, and only whoever runs `sync-images.sh --sync` needs write access.
+### Your R libraries start empty
 
-The **R package libraries cannot**. Packages are compiled against a specific R
-minor version and installed into a directory you own, so each user needs their
-own `R_LIBS_ROOT` with one `<ver>_singularity` subdirectory per R version. A
-version with no library directory is simply not offered by the form — which is
-deliberate, since R ignores a missing `R_LIBS_USER` silently.
-
-Your libraries start empty. Install into them from inside RStudio, or:
+`install.sh` creates the library directories but installs nothing into them. Fill
+them from inside RStudio, or from a terminal:
 
 ```bash
 Rscript_ -e 'install.packages("data.table")'
 ```
+
+An R version with **no** library directory is simply not offered by the form.
+That is deliberate: R ignores a missing `R_LIBS_USER` silently, so an image
+offered without a matching library would hand you a session where every package
+you had installed appeared to have vanished.
 
 ## Running rootless: two things the image needs help with
 
