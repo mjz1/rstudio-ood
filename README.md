@@ -39,8 +39,9 @@ sync_images --sync      # submits a Slurm job; ~2 GB per R version
 and open **Interactive Apps → RStudio Server** in OnDemand.
 
 Details — every flag, requirements (incl. the OnDemand "sandbox apps" switch),
-what it touches, uninstalling, sharing images across a lab, other clusters, and
-the full config reference: **[docs/install.md](docs/install.md)**.
+what it touches, uninstalling, sharing images across a lab, **migrating
+existing R libraries**, other clusters, and the full config reference:
+**[docs/install.md](docs/install.md)**.
 
 ## Using it
 

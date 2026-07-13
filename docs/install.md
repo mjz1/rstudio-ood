@@ -124,6 +124,60 @@ The maintainer's umask cannot break consumers either: `sync-images.sh` sets the
 mode of every `.sif`, `.digest`, `.info` and `images.json` explicitly, so a
 maintainer with `umask 077` still publishes group-readable metadata.
 
+## Migrating existing R libraries
+
+Whether your existing packages can be reused depends on **what built them**,
+because compiled R packages link against the system libraries of the machine
+that compiled them.
+
+**Case A — built inside these containers already** (you used the images via
+your own wrapper, or a colleague's copy of this app): your libraries are
+binary-compatible as-is. If they already follow the `<ver>_singularity` naming,
+just point the installer at them (`--r-libs-root /path/to/your/root`) and
+everything appears in the form. If they are named differently, a symlink per
+version satisfies both R and the form:
+
+```bash
+ln -s /path/to/your/R/4.5 "$R_LIBS_ROOT/4.5_singularity"
+```
+
+**Case B — built against the cluster's module R** (`module load R`): **do not
+copy the library into place.** Those binaries link module-provided system
+libraries by absolute path (`libxml2`, `hdf5`, `geos`, …) that do not exist in
+the Ubuntu container; some packages will load, and the rest fail with
+`libsomething.so: cannot open shared object file` at the worst possible time.
+Reinstall into the fresh library instead — it is one capture and one command:
+
+```r
+## in your OLD R (module R), once:
+writeLines(rownames(installed.packages()), "~/my-r-packages.txt")
+
+## in a new RStudio session here (or Rscript_):
+install.packages("BiocManager")
+pkgs <- readLines("~/my-r-packages.txt")
+BiocManager::install(setdiff(pkgs, rownames(installed.packages())),
+                     update = FALSE, ask = FALSE)   # resolves CRAN + Bioconductor
+```
+
+GitHub-only packages are the one thing that list cannot reconstruct — reinstall
+those by hand (`remotes::install_github("owner/repo")`). Expect the versions to
+be current rather than identical: the image pins CRAN to a dated snapshot, which
+is newer than whatever your old library accumulated.
+
+**Case C — renv projects: the easy case.** Open the project in a session here
+and run `renv::restore()`; the lockfile rebuilds everything, compiled correctly
+for the container, into the shared renv cache (`$RSTUDIO_WORK_DIR/.cache`).
+This is also the *safe* route for renv users coming from module R, because
+their old renv **cache** has the same binary-compatibility problem as Case B —
+restoring here rebuilds into a fresh cache rather than linking incompatible
+binaries.
+
+Migration is **additive**: nothing here touches your module-R setup, so the two
+coexist and you can move one project at a time. When a session is missing a
+package you had before, that is the migration telling you what it actually
+needs — install it then, rather than bulk-copying binaries that may quietly not
+work.
+
 ## Another cluster, different partitions
 
 Nothing needs editing. `install.sh` reads `AllowAccounts` / `DenyAccounts` /
