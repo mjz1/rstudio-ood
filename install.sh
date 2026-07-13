@@ -1021,6 +1021,21 @@ fi
 # -------------------------------------------------------------- shell init --
 
 SRC_LINE="source \"$APP_DIR/r-wrappers.sh\""
+
+# Already sourced SOMEWHERE? rc files chain (.bashrc -> .alias is common), so
+# grepping only the file we would append to misses a source line living one hop
+# away -- and the default flow then appends a duplicate pointing at whatever
+# --app-dir THIS run used, which for a staging install is the staging copy.
+# An explicit --shell-init wins over this detection.
+if [[ -z $SHELL_INIT ]]; then
+    for _rc in "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.profile" \
+               "$HOME/.alias" "$HOME/.aliases" "$HOME/.bash_aliases"; do
+        if [[ -f $_rc ]] && grep -qF 'r-wrappers.sh' "$_rc" 2>/dev/null; then
+            SHELL_INIT="$_rc"
+            break
+        fi
+    done
+fi
 if [[ -z $SHELL_INIT ]]; then
     # The wrappers are bash functions (BASH_SOURCE, mapfile, printf -v), so the
     # only rc file worth offering is a bash one. For a non-bash login shell the
