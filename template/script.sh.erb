@@ -239,6 +239,20 @@ log-level=warn
 logger-type=stderr
 LOGCONF
 
+# Never IDLE-suspend the session. Suspension exists to free memory for other
+# users on a shared server; here every session owns a dedicated Slurm
+# allocation, so the RAM is reserved either way and hibernation buys nothing.
+# What it DOES do is race renv on wake: the suspended state is restored before
+# renv re-asserts the project library, packages load by name from R_LIBS_USER,
+# and renv then fails to unload the stale versions ("Package 'glue' version
+# 1.7.0 cannot be unloaded") -- leaving the session silently running non-renv
+# package versions. End-of-job suspend (SIGTERM) is unaffected, so a slot still
+# resumes across relaunches; after a RELAUNCH resume the same race can still
+# appear once, and Session -> Restart R is the remedy.
+cat > "${TMPDIR}/rsession.conf" <<'RSESSCONF'
+session-timeout-minutes=0
+RSESSCONF
+
 # Clear the "session did not exit cleanly" prompt for THIS slot only. Scoped to
 # the slot's own XDG_DATA_HOME (was ${HOME}/work/.rstudio, which is shared -- so
 # launching one session used to reset every other running session's abend flag).
@@ -286,6 +300,7 @@ done
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
  -B "$TMPDIR/local-share-rstudio:/home/rstudio/.local/share/rstudio" \
  -B "$TMPDIR/logging.conf:/etc/rstudio/logging.conf" \
+ -B "$TMPDIR/rsession.conf:/etc/rstudio/rsession.conf" \
  "${BIND_ARGS[@]}" \
  -B "${HOME}:${HOME}" \
  --env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \

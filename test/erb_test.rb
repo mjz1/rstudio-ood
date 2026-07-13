@@ -188,6 +188,10 @@ check('no site-specific /data1 left hard-coded in the singularity call') do
   sh.each_line.none? { |l| l.include?('-B') && l.include?('/data1') }
 end
 check('missing bind paths are skipped, not fatal') { sh.include?('bind path not present on this node, skipping') }
+check('idle-suspend is disabled (dedicated allocation; suspension only races renv)') do
+  sh.include?('session-timeout-minutes=0') &&
+    sh.include?('rsession.conf:/etc/rstudio/rsession.conf')
+end
 check('GPU: --nv is gated on Slurm granting a GPU, never on /dev/nvidia*') do
   # Comments are stripped first: the template *explains* at length why it does not
   # probe /dev/nvidia*, and a naive substring match hits that explanation.

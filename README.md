@@ -173,6 +173,15 @@ the test suite works: **[docs/development.md](docs/development.md)**.
 
 ## Known issues
 
+- **Resuming a suspended session can complain `Package 'X' version Y cannot be
+  unloaded`.** RStudio restores the suspended R state before renv re-asserts
+  the project library, so packages load from your user library first and renv
+  then can't swap them for the project's versions. The session keeps running
+  with the WRONG (user-library) versions until you fix it — so when you see
+  this after a resume: **Session → Restart R** (Ctrl+Shift+F10), which loads
+  the right versions cleanly. Idle-suspension is now disabled (sessions own a
+  dedicated allocation, so hibernating saves nothing), which removes most
+  occurrences; a resume after a relaunch can still hit it once.
 - **Fixed (2026-07): the session password used to be the literal string
   `password`**, which let any user on the cluster sign into your session (the
   rserver port is reachable from other nodes and usernames are public in
