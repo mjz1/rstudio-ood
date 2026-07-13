@@ -169,6 +169,32 @@ inert: OnDemand reads `form.yml.erb`. If your OnDemand is too old to render
 `form.yml.erb`, the app will fail visibly — restore with
 `mv form.yml.bak form.yml`.
 
+## Signing in (there is no password field, on purpose)
+
+The launch form has no password box because you do not choose one. Each session
+gets a **random 16-character password**, generated at job start and persisted by
+OnDemand in that session's `connection.yml` (mode `0600` — only you can read it).
+The **Connect to RStudio Server** button on your *My Interactive Sessions* card
+submits it for you.
+
+**If RStudio ever signs you out**, click **Connect to RStudio Server** again. The
+button performs a full sign-in on every click, so it just puts you back in — you
+never have to remember anything. If RStudio's own sign-in page appears and the
+button will not clear it, expand *"Signed out of RStudio? Click here."* on the
+session card, which shows the username and password for that session.
+
+In practice this is rare: the Connect form sets `staySignedIn`, and
+`--auth-timeout-minutes` is 6000 (100 hours) — both longer than the 7-day job
+ceiling — so the usual way to see a sign-in page is to explicitly sign out.
+
+> **Historical note, worth knowing if you inherit an older copy.** The password
+> used to be overwritten with the literal string `password`, hacked in to work
+> around exactly this confusion. It meant **any user on the cluster could sign
+> into your session and run code as you**: the rserver port is reachable from
+> other nodes and your username is public in `squeue` (the job is named
+> `rstudio-<slot>`). The recovery path above is what that hack was reaching for,
+> and it costs nothing.
+
 ## Multiple concurrent sessions
 
 You can run several RStudio sessions at once — one per project, say — and switch

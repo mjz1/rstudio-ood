@@ -1,3 +1,23 @@
+<%#
+  The session card. `password` is a per-session random string, generated in
+  before.sh.erb and persisted by OnDemand in the session's connection.yml (mode
+  0600, readable only by its owner) -- so it needs no plumbing here beyond being
+  named. There is no password field on the launch form because the user does not
+  choose it.
+
+  The Connect button signs in from scratch on EVERY click. That is the whole
+  recovery path: if RStudio ever shows its own sign-in page (a "Sign out", or an
+  idle timeout beyond --auth-timeout-minutes), the user just comes back here and
+  clicks Connect again. Nothing needs to be remembered.
+
+  It has to SAY so, though. Previously it did not, and the credentials were
+  invisible -- so a user locked out at RStudio's own login screen had a password
+  box and no password. That dead end is the most plausible reason someone once
+  hard-coded the password to the literal string "password", which let any user on
+  the cluster into any session. Showing the credentials here removes the reason
+  to ever do that again. It leaks nothing: this card renders only on its owner's
+  dashboard, from a file only they can read.
+-%>
 <script>
   document.cookie = "csrf-token=<%= csrf_token %>; path=/rnode/<%= host %>/<%= port %>; secure";
 </script>
@@ -11,3 +31,28 @@
     <i class="fa fa-registered"></i> Connect to RStudio Server
   </button>
 </form>
+
+<details style="margin-top:0.75em">
+  <summary style="cursor:pointer">Signed out of RStudio? Click here.</summary>
+  <div style="margin-top:0.5em">
+    <p style="margin-bottom:0.5em">
+      Just press <strong>Connect to RStudio Server</strong> again — it signs you
+      back in. You never need to type these. They are generated per session and
+      only you can see them.
+    </p>
+    <table class="table table-condensed" style="margin-bottom:0.25em; width:auto">
+      <tr>
+        <td style="padding-right:1em"><strong>Username</strong></td>
+        <td><code><%= ENV["USER"] %></code></td>
+      </tr>
+      <tr>
+        <td style="padding-right:1em"><strong>Password</strong></td>
+        <td><code><%= password %></code></td>
+      </tr>
+    </table>
+    <p class="text-muted" style="margin-bottom:0">
+      Only if RStudio shows its own sign-in page and the button above will not
+      clear it. This password is valid for this session alone and dies with it.
+    </p>
+  </div>
+</details>

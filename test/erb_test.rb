@@ -278,6 +278,36 @@ check('an ABSENT num_gpus does not crash the template (defined? guard)') do
   !YAML.safe_load(absent).dig('script', 'native').map(&:to_s).include?('--gres')
 end
 
+# ------------------------------------------------------------- view.html.erb --
+#
+# The session card. Rendered with the connection params OnDemand persists in
+# connection.yml -- host, port, password, csrf_token -- as bare locals.
+
+puts
+puts 'view.html.erb'
+view = render(File.join(APP, 'view.html.erb'), locals_binding(
+  host: 'node042', port: 61234,
+  password: 'S3cretPerSession', csrf_token: 'abcd-1234'
+))
+File.write(File.join(OUT, 'view.html'), view)
+
+check('renders, and posts to RStudio sign-in on the session node') do
+  view.include?('action="/rnode/node042/61234/auth-do-sign-in"')
+end
+check('the Connect button submits the per-session password') do
+  view.include?('name="password" value="S3cretPerSession"')
+end
+check('the password is NEVER the literal string "password"') do
+  # The regression that let any cluster user into any session. before.sh.erb is
+  # the source of truth, so assert on it directly rather than on a rendered value
+  # the test itself supplied.
+  before = File.read(File.join(APP, 'template', 'before.sh.erb'))
+  before.include?('create_passwd') && !before.match?(/^\s*password=password\s*$/)
+end
+check('a locked-out user can SEE the credentials (else they hard-code the password)') do
+  view.include?('S3cretPerSession') && view.downcase.include?('signed out')
+end
+
 # ---------------------------------------------------------------------- done --
 
 puts
