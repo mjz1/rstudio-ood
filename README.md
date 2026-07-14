@@ -253,10 +253,9 @@ and how the test suite works: **[docs/development.md](docs/development.md)**.
   the right versions cleanly. Idle-suspension is now disabled (sessions own a
   dedicated allocation, so hibernating saves nothing), which removes most
   occurrences; a resume after a relaunch can still hit it once.
-- **Fixed (2026-07): the session password used to be the literal string
-  `password`**, which let any user on the cluster sign into your session (the
-  rserver port is reachable from other nodes and usernames are public in
-  `squeue`). The random password is now kept, and the session card shows the
-  credentials for the rare manual sign-in. Sessions launched by an older copy of
-  the app keep the weak password until relaunched; if idle logouts recur, the
-  knob is `--auth-timeout-minutes` in `script.sh.erb`, never the password.
+- **Sessions launched by a pre-2026-07 copy of the app use a weak, guessable
+  password until relaunched** — relaunch them. Current versions keep the random
+  per-session password (the session card shows it for the rare manual sign-in).
+  If idle logouts ever recur, the knob is `--auth-timeout-minutes` in
+  `script.sh.erb` — never the password; the history is in the
+  [changelog](CHANGELOG.md).
