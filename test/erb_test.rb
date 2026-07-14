@@ -209,6 +209,12 @@ check('never points at another R minor version library') { !sh.include?('4.6_sin
 check('session slot lives under RSTUDIO_WORK_DIR, not a hard-coded ~/work') do
   sh.include?("RSTUDIO_WORK_DIR=\"#{WORK}\"") && sh.include?('SLOT_DIR="${RSTUDIO_WORK_DIR}/.rstudio-sessions/')
 end
+check('RSTUDIO_DATA_HOME is pinned per-slot (a user rc export otherwise breaks isolation)') do
+  # Both places: rserver's env (inherits the job's) and the rsession wrapper
+  # (rserver strips the session env, so the wrapper is the authoritative one).
+  sh.include?('export RSTUDIO_DATA_HOME="${SLOT_DIR}/data/rstudio"') &&
+    sh.include?('--env RSTUDIO_DATA_HOME="${SLOT_DIR}/data/rstudio"')
+end
 check('renv cache (XDG_CACHE_HOME) stays SHARED, not per-slot') do
   sh.include?('export XDG_CACHE_HOME="${SHARED_CACHE}"') && sh.include?('SHARED_CACHE="${RSTUDIO_WORK_DIR}/.cache"')
 end

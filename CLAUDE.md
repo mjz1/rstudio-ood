@@ -209,6 +209,19 @@ state), the cache, and an abend-reset loop that rewrote *every* active session's
 only** under `$RSTUDIO_WORK_DIR/.rstudio-sessions/<slot>/data`. The work dir is
 chosen at install time and lives on large storage, NOT `$HOME` (which is small).
 
+**`RSTUDIO_DATA_HOME` must be pinned per-slot, not just `XDG_DATA_HOME`.** It
+overrides XDG_DATA_HOME *for RStudio specifically*, so a user who exports it in
+their shell rc -- a common trick for keeping session state off a quota'd `$HOME`
+-- silently defeats the entire slot mechanism: every session writes to that one
+shared directory, concurrent sessions collide exactly as they did before slots
+existed, and the abend-reset (which looks under the slot) becomes a no-op. This
+was live on the developer's own account for the whole lifetime of the feature,
+undetected, because everything *looked* right: `data/claude` and
+`data/SeuratData` were correctly per-slot -- only RStudio's own state was not.
+`script.sh.erb` now sets it explicitly in both the rserver env and the rsession
+wrapper. The general lesson: an app-specific override of a standard variable is
+a supply chain of one, and the user's rc is upstream of it.
+
 **`XDG_CACHE_HOME` must stay shared** -- this was a bug fix. renv keeps its
 library and cache under `R_user_dir("renv","cache")` == `$XDG_CACHE_HOME/R/renv`,
 so a per-slot cache pointed `.libPaths()` at an empty per-slot renv root and

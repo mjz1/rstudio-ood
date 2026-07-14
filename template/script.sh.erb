@@ -158,6 +158,15 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # Per-slot RStudio session/workspace state lives under XDG_DATA_HOME, so
   # isolating it is what lets concurrent sessions coexist.
   export XDG_DATA_HOME="${SLOT_DIR}/data"
+  # RSTUDIO_DATA_HOME overrides XDG_DATA_HOME *for RStudio specifically*, and a
+  # user who exports it in their shell rc (a common trick to keep session state
+  # off a quota'd \$HOME) silently defeats the whole slot mechanism: every
+  # session writes to that one shared directory, concurrent sessions collide
+  # again, and the abend-reset below -- which looks under the slot -- becomes a
+  # no-op. Pin it to the slot so no inherited value can win. This is not
+  # hypothetical: it was live on the developer's own account for the entire
+  # lifetime of the slots feature, and no slot ever held any RStudio state.
+  export RSTUDIO_DATA_HOME="${SLOT_DIR}/data/rstudio"
   # XDG_CACHE_HOME stays SHARED. renv stores its package library and cache under
   # R_user_dir("renv","cache") == \$XDG_CACHE_HOME/R/renv -- so a per-slot cache
   # moves every renv project's library out from under it (.libPaths breaks).
@@ -338,6 +347,7 @@ done
  -B "${HOME}:${HOME}" \
  --env SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
  --env SSL_CERT_DIR=/etc/ssl/certs \
+ --env RSTUDIO_DATA_HOME="${SLOT_DIR}/data/rstudio" \
  "<%= image %>" rserver \
  --database-config-file=/tmp/database.conf \
  --server-user="${RSTUDIO_USER}" \
