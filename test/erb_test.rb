@@ -85,6 +85,25 @@ FileUtils.mkdir_p([IMAGES, LIBS, WORK, DATA])
 HOSTILE_SLOT = 'evil" ] , [ "x'
 FileUtils.mkdir_p(File.join(WORK, '.rstudio-sessions', HOSTILE_SLOT))
 
+# A slot CREATED three days ago but USED an hour ago: state is written deep
+# inside (data/rstudio/...), which never moves the top-level directory's mtime.
+# Reading the slot dir alone reports "last used 3d ago" for an active slot.
+STALE_MTIME_SLOT = 'used-recently'
+_srs = File.join(WORK, '.rstudio-sessions', STALE_MTIME_SLOT)
+FileUtils.mkdir_p(File.join(_srs, 'data', 'rstudio', 'sessions'))
+_now = Time.now
+File.utime(_now - 3600, _now - 3600, File.join(_srs, 'data', 'rstudio', 'sessions'))
+File.utime(_now - 3600, _now - 3600, File.join(_srs, 'data', 'rstudio'))
+File.utime(_now - 3600, _now - 3600, File.join(_srs, 'data'))
+File.utime(_now - 3 * 86_400, _now - 3 * 86_400, _srs)   # dir itself: 3 days old
+
+# An unambiguously stale slot, to sort against.
+OLD_SLOT = 'long-abandoned'
+_old = File.join(WORK, '.rstudio-sessions', OLD_SLOT)
+FileUtils.mkdir_p(File.join(_old, 'data'))
+File.utime(_now - 30 * 86_400, _now - 30 * 86_400, File.join(_old, 'data'))
+File.utime(_now - 30 * 86_400, _now - 30 * 86_400, _old)
+
 File.write(File.join(IMAGES, 'images.json'), JSON.pretty_generate(
   [{ 'r_version' => '4.6', 'r_full' => '4.6.1', 'rstudio' => '2026.06.0+242' },
    { 'r_version' => '4.5', 'r_full' => '4.5.2', 'rstudio' => '2026.06.0+242' },
@@ -155,6 +174,16 @@ end
 check('survives a PUN with no squeue on PATH (running-slot annotation is advisory)') do
   form.dig('attributes', 'session_name', 'options').is_a?(Array)
 end
+check('"last used" reflects real activity, not when the slot dir was created') do
+  opts = form.dig('attributes', 'session_name', 'options')
+  label = opts.find { |_, v| v == STALE_MTIME_SLOT }&.first.to_s
+  # Used an hour ago, created three days ago -> must read hours, never days.
+  label.include?('h ago') && !label.include?('d ago')
+end
+check('slots sort by real last-use, so a recently used slot outranks an abandoned one') do
+  opts = form.dig('attributes', 'session_name', 'options').map(&:last)
+  opts.index(STALE_MTIME_SLOT) < opts.index(OLD_SLOT)
+end
 check('a slot directory with quotes in its name does not break the form YAML') do
   # The strongest evidence is that YAML.safe_load succeeded above WITH the
   # hostile directory present; also confirm the entry round-tripped intact.
@@ -188,6 +217,9 @@ check('no site-specific /data1 left hard-coded in the singularity call') do
   sh.each_line.none? { |l| l.include?('-B') && l.include?('/data1') }
 end
 check('missing bind paths are skipped, not fatal') { sh.include?('bind path not present on this node, skipping') }
+check('the job script stamps the slot as used at launch (fixes the "last used" hint)') do
+  sh.include?('touch "${SLOT_DIR}"')
+end
 check('idle-suspend is disabled (dedicated allocation; suspension only races renv)') do
   sh.include?('session-timeout-minutes=0') &&
     sh.include?('rsession.conf:/etc/rstudio/rsession.conf')

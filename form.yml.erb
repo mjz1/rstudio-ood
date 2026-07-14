@@ -102,6 +102,24 @@
   # directory grows, so it belongs on whatever large storage the user chose at
   # install time. script.sh.erb creates the slots in the same place.
   slots_root = File.join(work_dir, '.rstudio-sessions')
+
+  # "Last used" for a slot. NOT File.mtime(slot_dir): a directory's mtime only
+  # changes when a DIRECT child is added or removed, so for a slot that is only
+  # ever written deeper in (data/rstudio/...) it records when the slot was
+  # CREATED. A slot used an hour ago read "last used 3d ago".
+  #
+  # script.sh.erb now touches the slot dir at launch, which makes the top-level
+  # mtime authoritative going forward; the deeper paths keep it honest for slots
+  # created before that, and for long sessions that outlive their launch. Bounded
+  # to four stats per slot -- this renders in the PUN, so no recursive scan.
+  last_used = lambda do |p|
+    [p,
+     File.join(p, 'data'),
+     File.join(p, 'data', 'rstudio'),
+     File.join(p, 'data', 'rstudio', 'sessions')]
+      .map { |c| File.exist?(c) ? File.mtime(c).to_i : 0 }
+      .max
+  end
   ago = lambda do |t|
     s = Time.now - t
     next 'just now'          if s < 60
@@ -129,10 +147,10 @@
   # Running slots sort first (running before idle), then most-recently-used.
   slot_opts = Dir.glob(File.join(slots_root, '*'))
                  .select { |p| File.directory?(p) }
-                 .sort_by { |p| [running[File.basename(p)] ? 0 : 1, -File.mtime(p).to_i] }
+                 .sort_by { |p| [running[File.basename(p)] ? 0 : 1, -last_used.call(p)] }
                  .map do |p|
     name = File.basename(p)
-    hint = running[name] ? 'running now' : "last used #{ago.call(File.mtime(p))}"
+    hint = running[name] ? 'running now' : "last used #{ago.call(Time.at(last_used.call(p)))}"
     ["#{name}  (#{hint})", name]
   end
   # Always offer "default", listed first if it is not already present.

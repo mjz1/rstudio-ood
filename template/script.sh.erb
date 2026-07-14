@@ -138,6 +138,10 @@ RSTUDIO_WORK_DIR="<%= work_dir %>"
 SLOT_DIR="${RSTUDIO_WORK_DIR}/.rstudio-sessions/${SESSION_SLOT}"
 SHARED_CACHE="${RSTUDIO_WORK_DIR}/.cache"
 mkdir -p "${SLOT_DIR}/data" "${SHARED_CACHE}"
+# Stamp the slot as used NOW. The form's "last used" hint reads this; without
+# the touch, the directory's mtime never moves after creation (children are only
+# written deeper in), so an actively used slot reported the day it was made.
+touch "${SLOT_DIR}"
 echo "RStudio session slot: ${SESSION_SLOT}  (state in ${SLOT_DIR}/data; cache + renv shared)"
 
 # Generate an `rsession` wrapper script
