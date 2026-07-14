@@ -17,6 +17,19 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ### Added
 
+- **AI agent access (MCP), opt-in per session.** A new launch-form select —
+  Off / Read-only / Read + execute — lets a coding agent running in the
+  session's Terminal (Claude Code, Copilot CLI, any MCP client) see the live
+  R session via the `mcptools` + `btw` R packages: list objects, describe
+  in-memory data frames, look up package docs, and — in execute mode, with
+  the agent asking approval on every call — run R code in the session itself,
+  so an agent can develop notebook code chunk-by-chunk against live state
+  instead of re-rendering to find each bug. Enabled sessions auto-register at
+  startup (after renv activation, so project libraries work); one-time
+  project setup is the new `rstudio_mcp_init` wrapper. Off is the default and
+  changes nothing; no network ports are involved (node-local sockets only),
+  and read-only sessions never expose an execute tool. (#1)
+
 - Docs: why `install.packages()` can claim a package "is not available" that
   exists on CRAN — every image's mirror is a dated Posit Package Manager
   snapshot, permanently so for older R versions (rocker policy). The new

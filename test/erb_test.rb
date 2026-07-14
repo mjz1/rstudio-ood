@@ -195,6 +195,11 @@ check('a slot directory with quotes in its name does not break the form YAML') d
   # hostile directory present; also confirm the entry round-tripped intact.
   form.dig('attributes', 'session_name', 'options').map(&:last).include?(HOSTILE_SLOT)
 end
+check('AI agent access is a three-way select defaulting to Off') do
+  a = form.dig('attributes', 'agent_access')
+  a && a['value'] == 'off' &&
+    (a['options'] || []).map(&:last).sort == %w[execute off read]
+end
 
 # The form must show the notice when a session has cached one. Rendered with HOME
 # redirected so the fixture's cache file is the one it finds.
@@ -305,6 +310,49 @@ check('GPU: --nv is gated on Slurm granting a GPU, never on /dev/nvidia*') do
   # probe /dev/nvidia*, and a naive substring match hits that explanation.
   code = sh.each_line.reject { |l| l.strip.start_with?('#') }.join
   code.include?('CUDA_VISIBLE_DEVICES') && code.include?('SLURM_JOB_GPUS') && !code.include?('/dev/nvidia')
+end
+
+# --- AI agent access (MCP) ---
+# Three-way form select: off (default) | read | execute. The wrapper exports are
+# the contract: the site-profile hook and the agent's MCP server both read them.
+
+check('agent access defaults OFF: the wrapper exports nothing MCP-related') do
+  # The site profile always CONTAINS the env-gated hook (it is a static file);
+  # what must be absent in an Off session is the exports that would arm it.
+  !sh.include?('export RSTUDIO_MCP_ACCESS') && !sh.include?('export BTW_RUN_R_ENABLED')
+end
+
+mcp_exec = render(script_erb, context_for(
+  rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+  session_name: 'default', new_session_name: '', agent_access: 'execute'
+).instance_eval { context = self; binding })
+File.write(File.join(OUT, 'script-mcp.sh'), mcp_exec)   # run.sh bash-parses this too
+
+check('execute mode: wrapper exports the mode, a tool list ending in run_r, and btw\'s gate') do
+  mcp_exec.include?('export RSTUDIO_MCP_ACCESS="execute"') &&
+    mcp_exec.match?(/export RSTUDIO_MCP_TOOLS="[A-Za-z0-9_,]*,run_r"/) &&
+    mcp_exec.include?('export BTW_RUN_R_ENABLED="true"')
+end
+check('the site profile registers the session via the rstudio.sessionInit hook (fires after renv)') do
+  mcp_exec.include?('rstudio.sessionInit') && mcp_exec.include?('mcptools::mcp_session()')
+end
+
+mcp_read = render(script_erb, context_for(
+  rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+  session_name: 'default', new_session_name: '', agent_access: 'read'
+).instance_eval { context = self; binding })
+check('read mode: no run_r in the tool list and no execute gate (read-only means read-only)') do
+  mcp_read.include?('export RSTUDIO_MCP_ACCESS="read"') &&
+    !mcp_read.match?(/export RSTUDIO_MCP_TOOLS="[^"]*run_r/) &&
+    !mcp_read.include?('export BTW_RUN_R_ENABLED')
+end
+
+mcp_evil = render(script_erb, context_for(
+  rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+  session_name: 'default', new_session_name: '', agent_access: 'execute"; rm -rf /'
+).instance_eval { context = self; binding })
+check('an unrecognised agent_access value is allowlisted down to Off, never interpolated') do
+  !mcp_evil.include?('export RSTUDIO_MCP_ACCESS') && !mcp_evil.include?('rm -rf')
 end
 
 # The slot becomes a path component. It must not be able to escape the sessions

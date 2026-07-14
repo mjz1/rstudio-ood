@@ -12,6 +12,8 @@
 #   Rscript_ [-v VERSION] ...     non-interactive R (arguments ARE forwarded)
 #   bash_ [-v VERSION] [args...]  shell inside the container
 #   sync_images [--sync] [ver]    check for / pull newer images
+#   rstudio_slots [--rm|--prune]  inspect / tidy named session slots
+#   rstudio_mcp_init [DIR]        per-project setup for AI agent access (MCP)
 #
 # VERSION is an R minor version (e.g. 4.5) or `latest`. Omit it to get the
 # newest R that has both an image and a populated package library.
@@ -268,6 +270,51 @@ rstudio_slots() {
         *) echo "usage: rstudio_slots [--rm SLOT | --prune]" >&2; return 1 ;;
     esac
     unset -f _is_running
+}
+
+# rstudio_mcp_init [DIR] -- one-time per-project setup for AI agent access.
+#
+# Writes DIR/.mcp.json (default: the current directory) registering an
+# "r-session" MCP server for agents launched there. Claude Code reads .mcp.json
+# natively; the file is plain JSON and committable, so a lab member cloning the
+# project inherits the server. It is deliberately generic: WHICH tools it
+# serves comes from RSTUDIO_MCP_TOOLS, which the session exports per the launch
+# form's "AI agent access" choice -- so the file never needs rewriting, and the
+# form stays in control per session. Outside a session (variable unset) it
+# serves a harmless read-only default; the execute tool (run_r) additionally
+# needs BTW_RUN_R_ENABLED, which only an execute-mode session exports.
+rstudio_mcp_init() {
+    local dir="${1:-.}" f
+    [ -d "$dir" ] || { echo "no such directory: $dir" >&2; return 1; }
+    f="$dir/.mcp.json"
+    if [ -e "$f" ]; then
+        if grep -q '"r-session"' "$f" 2>/dev/null; then
+            echo "already configured: $f (has an \"r-session\" server)"
+            return 0
+        fi
+        # Never rewrite a file another tool owns half of: merging JSON in bash
+        # is how files get corrupted. Tell the user what to add instead.
+        echo "refusing to modify existing $f -- add this to its \"mcpServers\" by hand:" >&2
+        echo '  "r-session": { "command": "Rscript", "args": ["-e", "<see rstudio_mcp_init in r-wrappers.sh>"] }' >&2
+        return 1
+    fi
+    cat > "$f" <<'MCPJSON'
+{
+  "mcpServers": {
+    "r-session": {
+      "command": "Rscript",
+      "args": [
+        "-e",
+        "mcptools::mcp_server(tools = do.call(btw::btw_tools, as.list(strsplit(Sys.getenv('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo'), ',')[[1]])))"
+      ]
+    }
+  }
+}
+MCPJSON
+    echo "wrote $f"
+    echo "  1. install the R packages into this project's library:  install.packages(c('mcptools','btw'))"
+    echo "  2. launch a session with 'AI agent access' enabled on the form"
+    echo "  3. run your agent (claude, copilot) from this directory in the session's Terminal"
 }
 
 update_r() {

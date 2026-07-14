@@ -81,24 +81,30 @@ ERB_TEST_OUT="$OUT" ruby_run "$HERE/erb_test.rb"
 echo
 echo 'rendered output'
 rc=0
-if bash -n "$OUT/script.sh"; then
-    echo '  ok   script.sh.erb renders to syntactically valid bash'
-else
-    echo '  FAIL script.sh.erb renders to bash that will not parse'
-    rc=1
-fi
-
-# The generated rsession wrapper is a heredoc inside the job script -- a quoting
-# mistake there produces a script that parses but writes a broken wrapper, and the
-# session dies with no output. Pull it out and check it too.
-if sed -n '/^  #!\/usr\/bin\/env bash/,/^EOL$/p' "$OUT/script.sh" | sed 's/^  //; /^EOL$/d' > "$OUT/rsession.sh" \
-   && [ -s "$OUT/rsession.sh" ]; then
-    if bash -n "$OUT/rsession.sh"; then
-        echo '  ok   the rsession wrapper it writes is valid bash too'
+# Every script*.sh the suite wrote: the default render plus variants (e.g. the
+# agent-access/MCP render), so a branch only taken under a form option cannot
+# ship a bash syntax error the default render never exercises.
+for s in "$OUT"/script*.sh; do
+    name="$(basename "$s")"
+    if bash -n "$s"; then
+        echo "  ok   $name renders to syntactically valid bash"
     else
-        echo '  FAIL the rsession wrapper it writes will not parse'
+        echo "  FAIL $name renders to bash that will not parse"
         rc=1
     fi
-fi
+
+    # The generated rsession wrapper is a heredoc inside the job script -- a
+    # quoting mistake there produces a script that parses but writes a broken
+    # wrapper, and the session dies with no output. Pull it out and check it too.
+    if sed -n '/^  #!\/usr\/bin\/env bash/,/^EOL$/p' "$s" | sed 's/^  //; /^EOL$/d' > "$OUT/rsession-$name" \
+       && [ -s "$OUT/rsession-$name" ]; then
+        if bash -n "$OUT/rsession-$name"; then
+            echo "  ok   the rsession wrapper $name writes is valid bash too"
+        else
+            echo "  FAIL the rsession wrapper $name writes will not parse"
+            rc=1
+        fi
+    fi
+done
 
 exit $rc

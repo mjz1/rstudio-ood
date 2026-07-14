@@ -62,6 +62,25 @@
   bind_paths  = setting.call('RSTUDIO_BIND_PATHS',
                              '/data1,/run/munge,/etc/slurm,/usr/lib64/slurm,/usr/lib64/libmunge.so.2')
                   .split(',').map(&:strip).reject(&:empty?)
+
+  # AI agent access (MCP), from the form's three-way select: off | read |
+  # execute. Guarded like new_session_name (older forms lack the field) and
+  # ALLOWLISTED, not sanitised: the value is interpolated into the rsession
+  # wrapper, so nothing free-form may survive to there.
+  agent_access = context.respond_to?(:agent_access) ? context.agent_access.to_s.strip : 'off'
+  agent_access = 'off' unless %w[read execute].include?(agent_access)
+
+  # btw tool groups served to the agent. Curated to the groups with no native
+  # equivalent in a coding agent -- serving btw's files/git/etc. would give the
+  # model two ways to do everything and it will pick the worse one half the
+  # time. run_r (the execute tool) is appended only in execute mode; btw
+  # additionally gates it behind BTW_RUN_R_ENABLED, exported below in execute
+  # mode only, so read-only really is read-only even if this list is
+  # overridden. Config/env can override the read set (RSTUDIO_MCP_TOOLS);
+  # scrubbed hard because it lands inside the wrapper heredoc.
+  mcp_tools = setting.call('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo,ide')
+                .gsub(/[^A-Za-z0-9_,]/, '')
+  mcp_tools = "#{mcp_tools},run_r" if agent_access == 'execute'
 -%>
 
 # Load the required environment
@@ -214,6 +233,20 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   export RSTUDIO_UPDATE_LATEST="${_latest_for_r:-}"
   export RSTUDIO_UPDATE_DEPLOYED="${_dep_for_r:-}"
   export R_PROFILE="/tmp/site-profile.R"
+<%- if agent_access != 'off' -%>
+
+  # AI agent access (opt-in on the launch form). Children of rsession -- the R
+  # console AND the Terminal pane -- inherit these: the site profile reads the
+  # access mode to auto-register this session with mcptools, and an agent's
+  # Rscript MCP server (spawned in the Terminal by claude/copilot) reads the
+  # tool list. In execute mode the wrapper also opens btw's own gate for its
+  # run_r tool -- naming run_r in the list is deliberately not enough upstream.
+  export RSTUDIO_MCP_ACCESS="<%= agent_access %>"
+  export RSTUDIO_MCP_TOOLS="<%= mcp_tools %>"
+<%- if agent_access == 'execute' -%>
+  export BTW_RUN_R_ENABLED="true"
+<%- end -%>
+<%- end -%>
 
   # System-default prefs (written to \$TMPDIR/xdg above; \$TMPDIR is bound to
   # /tmp). Prepended, so /etc/xdg still serves everything else.
@@ -279,6 +312,39 @@ local({
       "    curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash -s -- --app-only\n",
       strrep("\u2500", 62)
     ))
+  }
+})
+
+# AI agent access (MCP): when the launch form enabled it, register this session
+# with mcptools so an agent in the Terminal pane can see it. Registered as a
+# HOOK, deliberately: rstudio.sessionInit fires after the project .Rprofile and
+# renv activation, so requireNamespace() searches the PROJECT library -- which
+# is where renv-managed projects actually have mcptools installed. This site
+# profile itself runs too early for that. Env-gated like everything else here,
+# so the file stays static; an Off session never reaches the setHook call.
+local({
+  mode <- Sys.getenv("RSTUDIO_MCP_ACCESS", unset = "")
+  if (nzchar(mode)) {
+    setHook("rstudio.sessionInit", function(newSession) {
+      if (requireNamespace("mcptools", quietly = TRUE)) {
+        ok <- tryCatch({ mcptools::mcp_session(); TRUE },
+                       error = function(e) {
+                         message("-- MCP session registration FAILED: ",
+                                 conditionMessage(e), " --")
+                         FALSE
+                       })
+        if (ok) {
+          message(sprintf("-- MCP: agents in this session's terminal may %s (tools: %s) --",
+                          if (identical(mode, "execute")) "read it and RUN R CODE in it"
+                          else "read it",
+                          Sys.getenv("RSTUDIO_MCP_TOOLS", unset = "?")))
+        }
+      } else {
+        message("-- AI agent access was requested at launch, but package 'mcptools' ",
+                "is not installed in this R's library paths. ",
+                "install.packages(c('mcptools','btw')) to enable it. --")
+      }
+    }, action = "append")
   }
 })
 RPROFILE
