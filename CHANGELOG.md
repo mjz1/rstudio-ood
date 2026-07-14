@@ -17,6 +17,20 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh 
 
 _Nothing yet._
 
+## [0.9.3] - 2026-07-13
+
+### Added
+
+- The update notice now appears **in the launch form** — the first thing every
+  user sees — not only in the R console and `sync_images`. Consumers never run
+  `sync_images`, so the notice could previously reach the very people it was
+  written for only after they had already launched a session.
+
+  The check itself still runs on the compute node (the launch form renders in
+  the PUN, where a slow network call would delay every launch for everyone): a
+  session caches the verdict, the form reads the cache with no network at all,
+  and the banner clears itself once you update.
+
 ## [0.9.2] - 2026-07-13
 
 ### Added
@@ -115,7 +129,8 @@ became something another person could install.
   are bash-only instead of having `.bashrc` edited pointlessly; an existing
   `r-wrappers.sh` source line is found across chained rc files.
 
-[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/mjz1/rstudio-ood/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/mjz1/rstudio-ood/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/mjz1/rstudio-ood/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/mjz1/rstudio-ood/releases/tag/v0.9.0

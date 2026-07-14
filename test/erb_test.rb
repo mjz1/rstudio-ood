@@ -196,6 +196,24 @@ check('a slot directory with quotes in its name does not break the form YAML') d
   form.dig('attributes', 'session_name', 'options').map(&:last).include?(HOSTILE_SLOT)
 end
 
+# The form must show the notice when a session has cached one. Rendered with HOME
+# redirected so the fixture's cache file is the one it finds.
+check('the launch form shows an update notice when one is cached') do
+  fake_home = File.join(FIX, 'home')
+  FileUtils.mkdir_p(File.join(fake_home, '.config', 'rstudio_dev'))
+  File.write(File.join(fake_home, '.config', 'rstudio_dev', 'update-notice'), "1.2.3\n0.9.0\n")
+  real_home = ENV['HOME']
+  begin
+    ENV['HOME'] = fake_home
+    out = render(File.join(APP, 'form.yml.erb'), binding)
+    y = YAML.safe_load(out, aliases: true)
+    y.dig('attributes', 'session_name', 'label').to_s.include?('UPDATE AVAILABLE') &&
+      y.dig('attributes', 'session_name', 'help').to_s.include?('0.9.0 -> 1.2.3')
+  ensure
+    ENV['HOME'] = real_home
+  end
+end
+
 # ------------------------------------------------------ template/script.sh.erb --
 
 puts
@@ -246,6 +264,10 @@ check('update notice falls back to the default app dir when config predates RSTU
   ensure
     ENV['RSTUDIO_DEV_CONFIG'] = CONFIG
   end
+end
+check('the launch caches its verdict for the form (PUN must not make network calls)') do
+  sh.include?('/.config/rstudio_dev/update-notice') &&
+    sh.include?('rm -f "${_cache}"')        # cleared when current
 end
 check('update NOTICE: non-blocking version check, surfaced in the R banner, never auto-applied') do
   sh.include?("_app_dir=\"#{APPDIR}\"") &&                     # stamp path from config

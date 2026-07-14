@@ -155,6 +155,24 @@
   end
   # Always offer "default", listed first if it is not already present.
   slot_opts.unshift(['default', 'default']) unless slot_opts.any? { |_, v| v == 'default' }
+
+  # Update notice, read from the cache a session launch left behind (never a
+  # network call: this renders in the PUN, and a slow GitHub must not delay the
+  # form for every user). The file holds "latest\ndeployed"; a session that finds
+  # the app current deletes it, so the banner disappears once you update.
+  update_notice = nil
+  begin
+    nf = File.join(Dir.home, '.config', 'rstudio_dev', 'update-notice')
+    if File.readable?(nf)
+      latest, deployed = File.read(nf).lines.map(&:strip)
+      if latest && deployed && latest != deployed
+        update_notice = "An update is available: #{deployed} -> #{latest}. " \
+                        'Run: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only'
+      end
+    end
+  rescue StandardError
+    update_notice = nil
+  end
 -%>
 
 cluster: "<%= cluster %>"
@@ -165,8 +183,13 @@ attributes:
 
   session_name:
     widget: "select"
+<%- if update_notice -%>
+    label: "Session   ⬆ UPDATE AVAILABLE"
+    help: "<%= update_notice %>"
+<%- else -%>
     label: "Session"
     help: "Resume a previous session, or pick 'default'. To start a fresh named session, type a name in 'New session name' below (it overrides this)."
+<%- end -%>
     options:
 <%- slot_opts.each do |label, value| -%>
       <%# .inspect double-quotes AND escapes: slot names come from the filesystem,
