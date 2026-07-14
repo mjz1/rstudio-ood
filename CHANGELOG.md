@@ -15,7 +15,11 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh 
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- `CHANGELOG.md` (this file), with releases described in terms of what changes
+  for users. The update notice says a new version exists; this says why you
+  might want it.
 
 ## [0.9.1] - 2026-07-13
 
