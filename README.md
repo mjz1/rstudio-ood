@@ -116,6 +116,36 @@ build first, `torch::install_torch(reinstall = TRUE)` once. How `--nv`, `--gres`
 and the CUDA pick actually work: [docs/images.md](docs/images.md) and the
 comments in `template/script.sh.erb`.
 
+**AI assistance (Copilot / Posit Assistant).** The image enables two *separate*
+integrations, and they are not the same thing:
+
+- **GitHub Copilot** (`copilot-enabled=1`) — RStudio's built-in inline
+  completions, backed by the bundled `copilot-language-server`. Sign in under
+  **Tools → Global Options → Copilot** with your GitHub account. If your
+  institution provides Copilot (MSK does), **this is the route that needs no
+  extra credentials and no spend** — and it is the one to try first.
+- **Posit Assistant** (`posit-assistant-enabled=1`) — the newer chat/agent pane.
+  It prompts to install, then reports *"unable to connect"*, because it is a
+  **hosted commercial service**: the backend talks to `gateway.posit.ai`
+  (running `claude-sonnet-4-5`) and needs credentials the image cannot supply.
+  Two routes exist:
+  - **Bring your own key** (0.7.7+): the backend reads `ANTHROPIC_API_KEY` and
+    persists settings in `~/.posit/assistant/settings.json` — under `$HOME`, so
+    a key set once applies to every session and slot. Set it in the pane's
+    settings, or in `~/.Renviron` (`chmod 600` it). Billed to *your* Anthropic
+    account.
+  - **Posit's AI service** — sign in from the pane; needs a Posit account with
+    Assistant access. Untested here, and OAuth callbacks through OnDemand's
+    `/rnode/…` proxy are a plausible snag.
+
+  An institutional **GitHub Copilot subscription backs Posit Assistant in
+  Positron**; whether RStudio Server can use Copilot as the Assistant's backend
+  is **unverified** — if it can, that is the ideal route (no per-token spend,
+  institutional identity). Until someone confirms it, native Copilot above is
+  the working AI feature and the Assistant pane is decoration. Nothing in this
+  app blocks any of it: the backend starts cleanly, the image ships node, and
+  compute nodes reach both gateways.
+
 **Shell wrappers.** The same images and libraries from a terminal:
 
 ```bash
