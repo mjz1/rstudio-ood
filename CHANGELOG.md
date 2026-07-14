@@ -15,7 +15,17 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh 
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- The update notice now appears **in the launch form** — the first thing every
+  user sees — not only in the R console and `sync_images`. Consumers never run
+  `sync_images`, so the notice could previously reach the very people it was
+  written for only after they had already launched a session.
+
+  The check itself still runs on the compute node (the launch form renders in
+  the PUN, where a slow network call would delay every launch for everyone): a
+  session caches the verdict, the form reads the cache with no network at all,
+  and the banner clears itself once you update.
 
 ## [0.9.2] - 2026-07-13
 

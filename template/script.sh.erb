@@ -147,9 +147,18 @@ _app_dir="<%= app_dir %>"
 if [ -n "${_app_dir}" ] && [ -r "${_app_dir}/.deployed-version" ]; then
   _dep="$(awk '{print $1}' "${_app_dir}/.deployed-version" 2>/dev/null)"
   _latest="$(curl -fsS --max-time 3 https://raw.githubusercontent.com/mjz1/rstudio-ood/master/VERSION 2>/dev/null | head -1)"
+  # Cache the verdict for the LAUNCH FORM. The form renders in the PUN, where a
+  # network call would add latency to every launch for every user -- so the
+  # compute node (which already has the answer) writes it, and the form just
+  # reads a file. Cleared when current, so the notice disappears after updating.
+  _cache="${HOME}/.config/rstudio_dev/update-notice"
+  mkdir -p "$(dirname "${_cache}")" 2>/dev/null || true
   if [ -n "${_latest}" ] && [ -n "${_dep}" ] && [ "${_latest}" != "${_dep}" ]; then
     UPDATE_NOTICE="rstudio-ood ${_latest} is available (this app is ${_dep}); update: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only"
     echo "NOTE: ${UPDATE_NOTICE}"
+    printf '%s\n%s\n' "${_latest}" "${_dep}" > "${_cache}" 2>/dev/null || true
+  elif [ -n "${_latest}" ]; then
+    rm -f "${_cache}" 2>/dev/null || true
   fi
 fi
 # --------------------------------------------------------------------------------
