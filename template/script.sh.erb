@@ -277,7 +277,8 @@ cat > "${TMPDIR}/xdg/rstudio/rstudio-prefs.json" <<PREFS
 {
   "save_workspace": "never",
   "load_workspace": false,
-  "initial_working_directory": "${RSTUDIO_WORK_DIR}"
+  "initial_working_directory": "${RSTUDIO_WORK_DIR}",
+  "default_project_location": "${RSTUDIO_WORK_DIR}"
 }
 PREFS
 
@@ -341,7 +342,7 @@ done
  --auth-pam-require-password-prompt=0 \
  --auth-pam-helper-path="${RSTUDIO_AUTH}" \
  --auth-encrypt-password=0 \
- --auth-timeout-minutes=6000 \
+ --auth-timeout-minutes=10080 \
  --rsession-path="${RSESSION_WRAPPER_FILE}"
 
 # note, rserver in the container will start with the user space environment defined on host

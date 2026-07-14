@@ -199,7 +199,11 @@ check('system-default prefs: no .RData save/restore, start in the work dir') do
   sh.include?('"save_workspace": "never"') &&
     sh.include?('"load_workspace": false') &&
     sh.include?('"initial_working_directory": "${RSTUDIO_WORK_DIR}"') &&
+    sh.include?('"default_project_location": "${RSTUDIO_WORK_DIR}"') &&
     sh.include?('export XDG_CONFIG_DIRS="/tmp/xdg:/etc/xdg"')
+end
+check('the auth window outlasts the longest partition (7d = 10080 min)') do
+  sh.include?('--auth-timeout-minutes=10080')
 end
 check('GPU: --nv is gated on Slurm granting a GPU, never on /dev/nvidia*') do
   # Comments are stripped first: the template *explains* at length why it does not
