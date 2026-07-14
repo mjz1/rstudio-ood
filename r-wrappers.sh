@@ -293,9 +293,20 @@ rstudio_mcp_init() {
             return 0
         fi
         # Never rewrite a file another tool owns half of: merging JSON in bash
-        # is how files get corrupted. Tell the user what to add instead.
-        echo "refusing to modify existing $f -- add this to its \"mcpServers\" by hand:" >&2
-        echo '  "r-session": { "command": "Rscript", "args": ["-e", "<see rstudio_mcp_init in r-wrappers.sh>"] }' >&2
+        # is how files get corrupted. Print the EXACT entry to paste instead --
+        # a "see the source" pointer here is useless at the moment it appears.
+        {
+            echo "refusing to modify existing $f -- paste this into its \"mcpServers\" object:"
+            cat <<'SNIPPET'
+    "r-session": {
+      "command": "Rscript",
+      "args": [
+        "-e",
+        "mcptools::mcp_server(tools = do.call(btw::btw_tools, as.list(strsplit(Sys.getenv('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo'), ',')[[1]])))"
+      ]
+    }
+SNIPPET
+        } >&2
         return 1
     fi
     cat > "$f" <<'MCPJSON'
