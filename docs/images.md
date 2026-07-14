@@ -75,8 +75,8 @@ personal library shadows the site library, which insulates you from most of that
 
 Every image's default CRAN repository is a [Posit Package Manager](https://p3m.dev)
 snapshot **frozen at a date from that R version's era** — check yours with
-`getOption("repos")`. The newest image's date advances with each monthly
-rebuild, so it is at most about a month behind CRAN. Older images are pinned
+`getOption("repos")`. The newest image is the exception: its mirror is the
+rolling `latest`, so it simply tracks current CRAN. Older images are pinned
 *permanently* to the date their R version stopped being current (R 4.3 →
 April 2024): that is rocker's policy, inherited through the base image, and a
 rebuild does not move it.
