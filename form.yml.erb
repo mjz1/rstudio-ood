@@ -166,12 +166,21 @@
     if File.readable?(nf)
       latest, deployed = File.read(nf).lines.map(&:strip)
       if latest && deployed && latest != deployed
-# A link, not just a version number: "0.9.3 is available" tells nobody
-        # whether they want it. OnDemand renders help text as Markdown, so the
-        # update command gets a real fenced code block (copy-paste-able), not
-        # inline prose. Emitted below as a YAML block scalar to keep the newlines.
+        # A link, not just a version number: "0.9.3 is available" tells nobody
+        # whether they want it. Markdown has no "open in a new tab" syntax --
+        # that is an HTML attribute -- so the link is a raw <a target="_blank">,
+        # which OnDemand's Markdown renderer passes through. rel=noopener/
+        # noreferrer: without them the new tab keeps a live window.opener back
+        # to this form. The update command gets a fenced code block
+        # (copy-paste-able); emitted below as a YAML block scalar so the
+        # newlines survive.
+        #
+        # NB for editors: comments must stay ABOVE this assignment. A comment
+        # after a trailing `\` ends the statement early and silently truncates
+        # the notice -- valid Ruby, wrong output (this happened).
         update_notice = "**Update available: #{deployed} → #{latest}** · " \
-                        "[See what changed](https://github.com/mjz1/rstudio-ood/blob/main/CHANGELOG.md)\n" \
+                        "<a href=\"https://github.com/mjz1/rstudio-ood/blob/main/CHANGELOG.md\" " \
+                        "target=\"_blank\" rel=\"noopener noreferrer\">See what changed</a>\n" \
                         "\n" \
                         "```\n" \
                         "curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash -s -- --app-only\n" \

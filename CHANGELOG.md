@@ -15,7 +15,10 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- The "See what changed" link in the launch form opens in a new tab, so
+  reading the changelog no longer navigates away from a half-filled form.
 
 ## [0.9.6] - 2026-07-13
 

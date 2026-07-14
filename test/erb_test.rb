@@ -210,7 +210,10 @@ check('the launch form shows an update notice when one is cached') do
     help = y.dig('attributes', 'session_name', 'help').to_s
     y.dig('attributes', 'session_name', 'label').to_s.include?('UPDATE AVAILABLE') &&
       help.include?('0.9.0 → 1.2.3') &&
-      help.include?('CHANGELOG.md')          # a link, so users can decide
+      help.include?('CHANGELOG.md') &&                        # a link, so users can decide
+      help.include?('target="_blank"') &&                     # ... opening in a new tab
+      help.include?('rel="noopener noreferrer"') &&
+      help.include?("```")                                    # command survives as a code block
 
   ensure
     ENV['HOME'] = real_home
