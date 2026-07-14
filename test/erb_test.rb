@@ -275,8 +275,9 @@ end
 check('update NOTICE: non-blocking version check, surfaced in the R banner, never auto-applied') do
   sh.include?("_app_dir=\"#{APPDIR}\"") &&                     # stamp path from config
     sh.include?('curl -fsS --max-time 3') &&                     # bounded, silent-fail
-    sh.include?('export RSTUDIO_UPDATE_NOTICE="${UPDATE_NOTICE}"') &&
-    sh.include?('Sys.getenv("RSTUDIO_UPDATE_NOTICE"') &&         # printed by site profile
+    sh.include?('export RSTUDIO_UPDATE_LATEST=') &&              # structured, for the banner
+    sh.include?('Sys.getenv("RSTUDIO_UPDATE_LATEST"') &&         # site profile composes it
+    sh.include?('What changed:') &&                              # banner links the changelog
     !sh.match?(/git pull|--app-only[^"]*\|\s*bash.*<%/)         # no self-update machinery
 end
 check('idle-suspend is disabled (dedicated allocation; suspension only races renv)') do

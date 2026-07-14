@@ -156,6 +156,8 @@ if [ -n "${_app_dir}" ] && [ -r "${_app_dir}/.deployed-version" ]; then
   if [ -n "${_latest}" ] && [ -n "${_dep}" ] && [ "${_latest}" != "${_dep}" ]; then
     UPDATE_NOTICE="rstudio-ood ${_latest} is available (this app is ${_dep}). What changed: https://github.com/mjz1/rstudio-ood/blob/master/CHANGELOG.md | Update: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only"
     echo "NOTE: ${UPDATE_NOTICE}"
+    _latest_for_r="${_latest}"
+    _dep_for_r="${_dep}"
     printf '%s\n%s\n' "${_latest}" "${_dep}" > "${_cache}" 2>/dev/null || true
   elif [ -n "${_latest}" ]; then
     rm -f "${_cache}" 2>/dev/null || true
@@ -209,7 +211,8 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # project's renv .Rprofile; our profile re-sources the image's own site file
   # so the CRAN snapshot etc. are preserved.
   export RSTUDIO_SESSION_SLOT="${SESSION_SLOT}"
-  export RSTUDIO_UPDATE_NOTICE="${UPDATE_NOTICE}"
+  export RSTUDIO_UPDATE_LATEST="${_latest_for_r:-}"
+  export RSTUDIO_UPDATE_DEPLOYED="${_dep_for_r:-}"
   export R_PROFILE="/tmp/site-profile.R"
 
   # System-default prefs (written to \$TMPDIR/xdg above; \$TMPDIR is bound to
@@ -263,8 +266,20 @@ local({
     options(prompt = sprintf("[%s] > ", slot))
     message(sprintf("-- RStudio session slot: %s --", slot))
   }
-  upd <- Sys.getenv("RSTUDIO_UPDATE_NOTICE", unset = "")
-  if (nzchar(upd)) message("-- ", upd, " --")
+  latest   <- Sys.getenv("RSTUDIO_UPDATE_LATEST",   unset = "")
+  deployed <- Sys.getenv("RSTUDIO_UPDATE_DEPLOYED", unset = "")
+  if (nzchar(latest) && nzchar(deployed)) {
+    message(paste0(
+      "\n",
+      strrep("\u2500", 62), "\n",
+      "  rstudio-ood update available:  ", deployed, " \u2192 ", latest, "\n",
+      "  What changed:\n",
+      "    https://github.com/mjz1/rstudio-ood/blob/master/CHANGELOG.md\n",
+      "  Update (from a terminal):\n",
+      "    curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only\n",
+      strrep("\u2500", 62)
+    ))
+  }
 })
 RPROFILE
 
