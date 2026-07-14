@@ -74,6 +74,17 @@ notes="$(awk -v want="## [$v]" 'index($0, want)==1 {f=1;next} /^## \[/{f=0} f' C
 git tag -a "v$v" -m "v$v" -m "$notes"
 git push -q origin master --tags
 
+# Publish a GitHub Release from the changelog section, so the "what changed"
+# link in the update notice lands on a page that renders the notes. Optional:
+# skipped without gh, and never fatal -- a release is the tag, not the web page.
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+    if printf '%s\n' "$notes" | gh release create "v$v" --title "v$v" --notes-file - >/dev/null 2>&1; then
+        echo "==> published GitHub release v$v"
+    else
+        echo "    (gh release failed; the tag is the release of record)" >&2
+    fi
+fi
+
 echo "==> sync dev with the release"
 git checkout -q dev
 git merge -q master

@@ -15,7 +15,14 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh 
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+
+- The update notice now **links to this changelog**, in the launch form (a
+  clickable "See what changed"), the R console, and `sync_images`. A version
+  number tells you nothing; what changed is what lets you decide whether you
+  want it.
+- Releases are published on GitHub with their changelog section as the release
+  notes, so tags are readable rather than bare.
 
 ## [0.9.3] - 2026-07-13
 

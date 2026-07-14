@@ -154,7 +154,7 @@ if [ -n "${_app_dir}" ] && [ -r "${_app_dir}/.deployed-version" ]; then
   _cache="${HOME}/.config/rstudio_dev/update-notice"
   mkdir -p "$(dirname "${_cache}")" 2>/dev/null || true
   if [ -n "${_latest}" ] && [ -n "${_dep}" ] && [ "${_latest}" != "${_dep}" ]; then
-    UPDATE_NOTICE="rstudio-ood ${_latest} is available (this app is ${_dep}); update: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only"
+    UPDATE_NOTICE="rstudio-ood ${_latest} is available (this app is ${_dep}). What changed: https://github.com/mjz1/rstudio-ood/blob/master/CHANGELOG.md | Update: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only"
     echo "NOTE: ${UPDATE_NOTICE}"
     printf '%s\n%s\n' "${_latest}" "${_dep}" > "${_cache}" 2>/dev/null || true
   elif [ -n "${_latest}" ]; then

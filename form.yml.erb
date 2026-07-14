@@ -166,8 +166,11 @@
     if File.readable?(nf)
       latest, deployed = File.read(nf).lines.map(&:strip)
       if latest && deployed && latest != deployed
-        update_notice = "An update is available: #{deployed} -> #{latest}. " \
-                        'Run: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only'
+# A link, not just a version number: "0.9.3 is available" tells nobody
+        # whether they want it. OnDemand renders help text as Markdown.
+        update_notice = "**Update available: #{deployed} → #{latest}.** " \
+                        "[See what changed](https://github.com/mjz1/rstudio-ood/blob/master/CHANGELOG.md) — then run: " \
+                        '`curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only`'
       end
     end
   rescue StandardError

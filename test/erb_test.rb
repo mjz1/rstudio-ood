@@ -207,8 +207,11 @@ check('the launch form shows an update notice when one is cached') do
     ENV['HOME'] = fake_home
     out = render(File.join(APP, 'form.yml.erb'), binding)
     y = YAML.safe_load(out, aliases: true)
+    help = y.dig('attributes', 'session_name', 'help').to_s
     y.dig('attributes', 'session_name', 'label').to_s.include?('UPDATE AVAILABLE') &&
-      y.dig('attributes', 'session_name', 'help').to_s.include?('0.9.0 -> 1.2.3')
+      help.include?('0.9.0 → 1.2.3') &&
+      help.include?('CHANGELOG.md')          # a link, so users can decide
+
   ensure
     ENV['HOME'] = real_home
   end
