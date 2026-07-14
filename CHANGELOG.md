@@ -15,7 +15,12 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh 
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- The update notice got a face-lift on both surfaces: the launch form renders
+  the update command as a copy-paste-able code block (with the changelog link
+  alongside), and the R console prints a tidy ruled banner — versions, a
+  clickable changelog link, and the command — instead of one run-on line.
 
 ## [0.9.4] - 2026-07-13
 
