@@ -19,11 +19,9 @@
 #
 # This repo is NOT the app directory. Open OnDemand runs whatever sits in
 # ~/ondemand/dev/<app>, so installing is a copy: edit here, deploy with
-# `./install.sh --app-only`, and nothing you type is live until you do. Deploy a
-# second copy under another name to get a staging app:
-#
-#   ./install.sh --app-only --app-dir ~/ondemand/dev/rstudio_next \
-#                --app-name "RStudio Server (next)"
+# `./install.sh --app-only`, and nothing you type is live until you do. To
+# test a branch as its own OnDemand app, use ./stage.sh (wraps the --app-dir /
+# --app-name flags below with branch-derived names).
 #
 # Run --help for the full list.
 #
@@ -417,11 +415,9 @@ nothing.
   Install / deploy
   --app-dir PATH          Where to install the OnDemand app
                           (default: ~/ondemand/dev/rstudio_dev)
-  --app-name NAME         Rewrite manifest.yml's `name:` in the deployed copy.
-                          Deploy a second copy under another name to get a
-                          staging app that OnDemand lists separately, e.g.
-                            --app-dir ~/ondemand/dev/rstudio_next \
-                            --app-name "RStudio Server (next)"
+  --app-name NAME         Rewrite manifest.yml's `name:` in the deployed copy
+                          (./stage.sh uses this to give each branch its own
+                          OnDemand app; call it directly for custom names)
   --app-only              Deploy the app files and nothing else: no config
                           rewrite, no directory creation, no rc-file edit. This
                           is the routine "I edited the checkout, push it live"

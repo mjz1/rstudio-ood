@@ -20,8 +20,8 @@ name: ERB templates
 # none. Here the runner already has ruby, so it is used directly. Same tests.
 #
 # What this still cannot catch: OnDemand-specific binding differences, and
-# anything that only shows up against a real Slurm. Test on the staging app
-# (rstudio_next) before deploying to rstudio_dev.
+# anything that only shows up against a real Slurm. Test on a staged app
+# (./stage.sh) before deploying to rstudio_dev.
 
 on:
   pull_request:

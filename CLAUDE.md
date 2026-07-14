@@ -15,16 +15,19 @@ directory). This repo is the **source**; the app directory is a **deploy target*
         │  ./install.sh --app-only
         ▼
 ~/ondemand/dev/rstudio_dev/     what OnDemand actually runs
-~/ondemand/dev/rstudio_next/    staging copy, listed separately in the UI
+~/ondemand/dev/rstudio_stage_*/ staged branches (./stage.sh), each its own app
 ```
 
 - **Deploy:** `./install.sh --app-only` (app files only; leaves config, R
   libraries and caches alone). Full `./install.sh` re-runs the whole interview
   and rewrites `~/.config/rstudio_dev/config` -- that is for setting up, not for
   pushing an edit.
-- **Stage:** deploy a second copy with `--app-dir ~/ondemand/dev/rstudio_next
-  --app-name "RStudio Server (next)"`. OnDemand lists it as its own app, so you
-  can test-launch a change without touching the one other people use.
+- **Stage:** `./stage.sh` deploys the CURRENT branch as its own OnDemand app
+  (`dev` -> "RStudio Server (dev)", `feat/x` -> "RStudio Server (feat/x)"), so
+  any branch can be test-launched without touching the app other people use.
+  `./stage.sh --list` shows them, `--rm BRANCH` / `--prune` clean up (prune
+  removes apps whose branch is gone). Staged apps share the one config and the
+  same session slots -- do not run the SAME slot from two apps at once.
 - This split exists because the repo *used to be* the sandbox directory: every
   edit, checkout and stash was instantly live. If you find yourself editing files
   under `~/ondemand/`, you are editing production.
@@ -41,8 +44,9 @@ an unreleased commit in every future user's install. Therefore:
 - **master moves only via `./release.sh X.Y.Z`**, which verifies the suite,
   merges dev, writes VERSION (VERSION always equals the latest tag -- never
   edit it by hand), tags, pushes, and re-syncs dev.
-- **Deploy targets follow branches**: staging (`rstudio_next`) deploys from
-  dev; stable (`rstudio_dev`) deploys from master
+- **Deploy targets follow branches**: `./stage.sh` deploys the current branch
+  (dev or a feature branch) as its own staging app; stable (`rstudio_dev`)
+  deploys from master
   (`git switch master && ./install.sh --app-only && git switch dev`).
 - **Versioning**: pre-announcement bake-in lives on `0.9.x` -- release
   liberally, they are free while the user base is one person. `v1.0.0` is the
@@ -67,7 +71,7 @@ an unreleased commit in every future user's install. Therefore:
     `RSTUDIO_*`/`R_LIBS_*` from `ENV` before rendering, and `run.sh` reads
     `conf.sh` in a subshell so it cannot export anything. Do not undo either.
   - What it still cannot catch: OnDemand-specific binding differences and
-    anything that needs real Slurm. **Test on the staging app** (`rstudio_next`),
+    anything that needs real Slurm. **Test on a staged app** (`./stage.sh`),
     not the one your lab uses.
 - The PUN does not reliably source your shell rc, so **environment variables do
   not reach the ERB templates**. Configuration lives in
