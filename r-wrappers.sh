@@ -210,6 +210,66 @@ bash_() {
 
 sync_images() { "$RSTUDIO_SYNC" "$@"; }
 
+# rstudio_slots [--rm SLOT|--prune] -- inspect and tidy named session slots.
+#
+# Slots are just directories: <work>/.rstudio-sessions/<slot>. They hold RStudio
+# state (open tabs, history, per-project state) and anything the session wrote to
+# XDG_DATA_HOME. Removing one is a clean reset of that named session; the next
+# launch recreates it empty. Nothing here touches your R libraries or the shared
+# renv cache -- packages are never at risk.
+rstudio_slots() {
+    local root="${RSTUDIO_WORK_DIR:-$HOME/work}/.rstudio-sessions"
+    [ -d "$root" ] || { echo "no slots yet ($root)"; return 0; }
+
+    local running=""
+    command -v squeue >/dev/null 2>&1 && \
+        running="$(squeue -h -u "$USER" -o '%j' 2>/dev/null | sed -n 's/^rstudio-//p')"
+    _is_running() { printf '%s\n' "$running" | grep -qx -- "$1"; }
+
+    case "${1:-list}" in
+        --rm)
+            local s="${2:?usage: rstudio_slots --rm SLOT}"
+            [ -d "$root/$s" ] || { echo "no such slot: $s" >&2; return 1; }
+            if _is_running "$s"; then
+                echo "refusing: slot '$s' has a running session -- delete it in OnDemand first" >&2
+                return 1
+            fi
+            rm -rf "${root:?}/${s:?}"
+            echo "removed slot '$s' (next launch starts it fresh)"
+            ;;
+        --prune)
+            # Slots untouched for 30+ days and not running.
+            local s n=0
+            for d in "$root"/*/; do
+                [ -d "$d" ] || continue
+                s="$(basename "$d")"
+                _is_running "$s" && continue
+                if [ -z "$(find "$d" -maxdepth 0 -mtime -30 2>/dev/null)" ]; then
+                    rm -rf "$d"; echo "pruned '$s' (idle 30+ days)"; n=$((n+1))
+                fi
+            done
+            [ "$n" -eq 0 ] && echo "nothing to prune (no slot idle 30+ days)"
+            ;;
+        list|"")
+            printf '  %-16s %8s  %-14s %s\n' SLOT SIZE 'LAST USED' STATUS
+            for d in "$root"/*/; do
+                [ -d "$d" ] || continue
+                local s sz age st
+                s="$(basename "$d")"
+                sz="$(du -sh "$d" 2>/dev/null | cut -f1)"
+                age="$(find "$d" -maxdepth 0 -printf '%TY-%Tm-%Td' 2>/dev/null)"
+                if _is_running "$s"; then st="running now"; else st="-"; fi
+                printf '  %-16s %8s  %-14s %s\n' "$s" "$sz" "$age" "$st"
+            done
+            echo
+            echo "  rstudio_slots --rm SLOT   reset one slot (fresh on next launch)"
+            echo "  rstudio_slots --prune     remove slots idle 30+ days"
+            ;;
+        *) echo "usage: rstudio_slots [--rm SLOT | --prune]" >&2; return 1 ;;
+    esac
+    unset -f _is_running
+}
+
 update_r() {
     echo "update_r is deprecated: it pulled by moving tag, never updated the" >&2
     echo "rstudio-latest.sif symlink, and could replace it with a 4 GB file." >&2

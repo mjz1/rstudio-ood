@@ -56,7 +56,9 @@
   # Emitted as a bash list and filtered against what exists on the compute node --
   # singularity fails outright on a bind source that is not there.
   singularity = setting.call('RSTUDIO_SINGULARITY', 'singularity')
-  app_dir     = setting.call('RSTUDIO_APP_DIR', '')
+  # Fallback to the installer's default app dir: installs whose config predates
+  # RSTUDIO_APP_DIR would otherwise never see an update notice.
+  app_dir     = setting.call('RSTUDIO_APP_DIR', "#{Dir.home}/ondemand/dev/rstudio_dev")
   bind_paths  = setting.call('RSTUDIO_BIND_PATHS',
                              '/data1,/run/munge,/etc/slurm,/usr/lib64/slurm,/usr/lib64/libmunge.so.2')
                   .split(',').map(&:strip).reject(&:empty?)

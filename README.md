@@ -166,7 +166,13 @@ R_ 4.5                   # a specific R minor
 Rscript_ analysis.R      # arguments are forwarded
 bash_ -v 4.3             # shell in the container
 sync_images              # check the images
+rstudio_slots            # list session slots: size, last used, running
 ```
+
+`rstudio_slots --rm SLOT` resets one named session (its next launch starts
+fresh); `--prune` clears slots idle 30+ days. Neither touches your R libraries
+or the shared renv cache — packages are never at risk. A slot with a running
+session is refused rather than pulled out from under it.
 
 Wrappers get the GPU inside a GPU allocation, share the sessions' renv cache,
 and never fall back to another R version's library — a missing library is a

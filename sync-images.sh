@@ -382,9 +382,10 @@ main() {
 
     # Update notice for the app itself (never auto-applied): deployed stamp vs
     # the repo's VERSION. Silent on any failure; sync already talks to the net.
-    if [[ -n ${RSTUDIO_APP_DIR:-} && -r ${RSTUDIO_APP_DIR}/.deployed-version ]]; then
+    local _appdir="${RSTUDIO_APP_DIR:-$HOME/ondemand/dev/rstudio_dev}"
+    if [[ -r ${_appdir}/.deployed-version ]]; then
         local _dep _latest
-        _dep="$(awk '{print $1}' "${RSTUDIO_APP_DIR}/.deployed-version" 2>/dev/null)"
+        _dep="$(awk '{print $1}' "${_appdir}/.deployed-version" 2>/dev/null)"
         _latest="$(curl -fsS --max-time 3 https://raw.githubusercontent.com/mjz1/rstudio-ood/master/VERSION 2>/dev/null | head -1)"
         if [[ -n $_latest && -n $_dep && $_latest != "$_dep" ]]; then
             warn "app update available: $_dep -> $_latest"
