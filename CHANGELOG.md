@@ -17,6 +17,13 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ### Added
 
+- Docs: why `install.packages()` can claim a package "is not available" that
+  exists on CRAN — every image's mirror is a dated Posit Package Manager
+  snapshot, permanently so for older R versions (rocker policy). The new
+  section in `docs/images.md` covers the one-off `repos =` override, a
+  two-repo "newest compatible, else era version" default, and renv for
+  projects that must stay stable for years; the README's Known issues points
+  at it.
 - README: the two `ERROR` lines every session logs at startup (the Posit
   Assistant's Node backend warning about SQLite, and RStudio's memory display
   reading an already-exited helper process) are documented as benign. They look

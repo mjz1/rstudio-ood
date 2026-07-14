@@ -238,6 +238,12 @@ and how the test suite works: **[docs/development.md](docs/development.md)**.
   turned down: RStudio emits them at `ERROR`, which is above any log threshold
   the app can set. A session that *genuinely* fails to start does not merely log
   — it never connects.
+- **`install.packages()` says a package "is not available" that clearly exists
+  on CRAN.** The image's CRAN mirror is a dated snapshot (deliberate — older R
+  images are pinned to their era, and the newest trails CRAN by up to a month),
+  so packages released after that date are invisible. The fix is one `repos =`
+  argument; the whys and the durable options:
+  **[docs/images.md](docs/images.md#installing-packages-the-cran-mirror-is-snapshot-pinned)**.
 - **Resuming a suspended session can complain `Package 'X' version Y cannot be
   unloaded`.** RStudio restores the suspended R state before renv re-asserts
   the project library, so packages load from your user library first and renv

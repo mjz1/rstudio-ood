@@ -71,4 +71,62 @@ rocker base pins CRAN to a *dated* snapshot whose date advances when rocker
 rebuilds, shifting every package version in the image's site library. Your
 personal library shadows the site library, which insulates you from most of that.
 
+## Installing packages: the CRAN mirror is snapshot-pinned
+
+Every image's default CRAN repository is a [Posit Package Manager](https://p3m.dev)
+snapshot **frozen at a date from that R version's era** — check yours with
+`getOption("repos")`. The newest image's date advances with each monthly
+rebuild, so it is at most about a month behind CRAN. Older images are pinned
+*permanently* to the date their R version stopped being current (R 4.3 →
+April 2024): that is rocker's policy, inherited through the base image, and a
+rebuild does not move it.
+
+This is deliberate, and usually what you want. A snapshot is a self-consistent
+universe — every package version in it was built against its contemporaries
+*and against that R version* — which is why installs inside an old image
+essentially always succeed. Pointing an old R at today's CRAN is worse than it
+sounds: CRAN serves only each package's newest version, R silently drops from
+the index anything whose newest version requires a newer R, and there is no
+automatic fallback to an older compatible release. You'd trade "can't install
+this month's new package" for "can't install a growing share of mainstream
+ones".
+
+The consequence you will actually notice: a package released *after* the
+snapshot date reports `package 'X' is not available` even though it exists on
+CRAN. Three ways out, in increasing order of commitment:
+
+- **One-off install.** Take the URL from `getOption("repos")` and replace the
+  trailing date with `latest` (keep the `__linux__/<codename>` part — it is
+  what gets you prebuilt binaries):
+
+  ```r
+  install.packages("newpkg",
+                   repos = "https://p3m.dev/cran/__linux__/jammy/latest")
+  ```
+
+  Eyes open: the new package may pull newer versions of dependencies it shares
+  with everything else in that R version's library. Usually harmless; not what
+  you want under a years-old analysis you need byte-stable.
+
+- **A "newest compatible, else era version" default.** List both snapshots in
+  `options(repos = …)` (your `.Rprofile`, per project or per user). R merges
+  the indexes, drops anything requiring a newer R than yours, and installs the
+  highest surviving version — graceful degradation instead of a cliff:
+
+  ```r
+  options(repos = c(
+    P3M_PIN    = "https://p3m.dev/cran/__linux__/jammy/2024-04-23",
+    P3M_LATEST = "https://p3m.dev/cran/__linux__/jammy/latest"
+  ))
+  ```
+
+- **Long-lived projects: use renv.** A project that must keep working for
+  years should not depend on the shared per-version library at all — *any*
+  install into that library can move a dependency underneath it, whatever the
+  repos setting. `renv::init()` pins package versions and repos per project
+  (the lockfile's repos override the image default), upgrades become
+  deliberate and recorded (`renv::install(...)` + `renv::snapshot()`), and the
+  shared renv cache this app configures means twenty projects don't store
+  twenty copies of everything.
+
 Back to the [README](../README.md).
