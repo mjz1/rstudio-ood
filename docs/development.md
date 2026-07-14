@@ -13,14 +13,14 @@ warns if you run it from there.
         │  ./install.sh --app-only
         ▼
 ~/ondemand/dev/rstudio_dev/     what OnDemand runs (you, and your lab)
-~/ondemand/dev/rstudio_next/    staging copy, its own entry in the UI
+~/ondemand/dev/rstudio_stage_*/ staged branches (./stage.sh), each its own app
 ```
 
 | Command | Use |
 |---|---|
 | `./install.sh` | first-time setup: the interview, config, directories, shell wrappers |
 | `./install.sh --app-only` | routine deploy: push your edits live, touch nothing else |
-| `./install.sh --app-only --app-dir ~/ondemand/dev/rstudio_next --app-name "RStudio Server (next)"` | deploy a staging app |
+| `./stage.sh` | deploy the current branch as its own staging app (`--list`, `--rm BRANCH`, `--prune` to manage) |
 
 ## Branching, releases, and how updates reach users
 
@@ -32,7 +32,7 @@ released code only, and the workflow follows from that:
 |---|---|
 | daily work | on `dev` (feature branches optional, merged to dev) |
 | release | `./release.sh X.Y.Z` — suite check, merge dev→master, VERSION stamp, tag, push |
-| staging app | deploys from `dev` |
+| staging apps | `./stage.sh` on any non-master branch — dev gets "RStudio Server (dev)", `feat/x` gets "(feat/x)" |
 | stable app | deploys from `master`: `git switch master && ./install.sh --app-only && git switch dev` |
 | `VERSION` | always equals the latest tag; written by release.sh, never by hand |
 

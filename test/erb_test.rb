@@ -232,6 +232,21 @@ check('missing bind paths are skipped, not fatal') { sh.include?('bind path not 
 check('the job script stamps the slot as used at launch (fixes the "last used" hint)') do
   sh.include?('touch "${SLOT_DIR}"')
 end
+check('update notice falls back to the default app dir when config predates RSTUDIO_APP_DIR') do
+  # Render with the key absent: the notice must still have a stamp path to read.
+  conf_no_appdir = File.join(FIX, 'config-no-appdir')
+  File.write(conf_no_appdir, File.read(CONFIG).lines.reject { |l| l.start_with?('RSTUDIO_APP_DIR') }.join)
+  begin
+    ENV['RSTUDIO_DEV_CONFIG'] = conf_no_appdir
+    out = render(script_erb, context_for(
+      rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+      session_name: 'default', new_session_name: ''
+    ).instance_eval { context = self; binding })
+    out.include?('/ondemand/dev/rstudio_dev"')
+  ensure
+    ENV['RSTUDIO_DEV_CONFIG'] = CONFIG
+  end
+end
 check('update NOTICE: non-blocking version check, surfaced in the R banner, never auto-applied') do
   sh.include?("_app_dir=\"#{APPDIR}\"") &&                     # stamp path from config
     sh.include?('curl -fsS --max-time 3') &&                     # bounded, silent-fail
