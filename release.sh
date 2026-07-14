@@ -68,7 +68,9 @@ git merge --no-ff -q dev -m "release v$v"
 echo "$v" > VERSION
 git add VERSION
 git commit -q -m "v$v"
-notes="$(awk -v want="## [$v]" '$0 ~ want {f=1;next} /^## \[/{f=0} f' CHANGELOG.md)"
+# index(), not a regex: "## [0.9.2]" used as an awk regex is a CHARACTER CLASS,
+# so it matched nothing and v0.9.2 was tagged with an empty body.
+notes="$(awk -v want="## [$v]" 'index($0, want)==1 {f=1;next} /^## \[/{f=0} f' CHANGELOG.md)"
 git tag -a "v$v" -m "v$v" -m "$notes"
 git push -q origin master --tags
 
