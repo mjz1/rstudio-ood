@@ -218,14 +218,26 @@ the registry/digest architecture, and what actually changes between rebuilds:
 ## Developing it
 
 This repo is **not** the app directory: OnDemand runs `~/ondemand/dev/<app>`,
-and `./install.sh --app-only` deploys the checkout there. Deploy a second copy
-under another name to get a staging app, and run `./test/run.sh` (38
-assertions; renders every ERB template against a fixture cluster, no ruby on
-the cluster required) before you do. The workflow, the staging pattern, and how
-the test suite works: **[docs/development.md](docs/development.md)**.
+and `./install.sh --app-only` deploys the checkout there. Test a branch by
+staging it as its own app (`./stage.sh`) rather than on the one your lab uses,
+and run `./test/run.sh` before you deploy. The workflow, the staging pattern,
+and how the test suite works: **[docs/development.md](docs/development.md)**.
 
 ## Known issues
 
+- **`ERROR` lines in a session's log at startup are normal — ignore them.** Two
+  appear on every launch, and neither means anything went wrong:
+  - `ExperimentalWarning: SQLite is an experimental feature …` — the Posit
+    Assistant's Node backend prints this as it starts, and RStudio logs
+    *anything* that backend writes as an `ERROR`, warnings included.
+  - `Proc stat file: /proc/<pid>/status missing value — found only: 0 of: 2
+    keys` — RStudio's memory-usage display asks a helper process how much RAM
+    it is using a moment after that process has already exited.
+
+  Both fire once or twice as the session comes up and then stop. They cannot be
+  turned down: RStudio emits them at `ERROR`, which is above any log threshold
+  the app can set. A session that *genuinely* fails to start does not merely log
+  — it never connects.
 - **Resuming a suspended session can complain `Package 'X' version Y cannot be
   unloaded`.** RStudio restores the suspended R state before renv re-asserts
   the project library, so packages load from your user library first and renv

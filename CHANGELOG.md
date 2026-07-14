@@ -15,6 +15,14 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ## [Unreleased]
 
+### Added
+
+- README: the two `ERROR` lines every session logs at startup (the Posit
+  Assistant's Node backend warning about SQLite, and RStudio's memory display
+  reading an already-exited helper process) are documented as benign. They look
+  alarming, they are not, and they cannot be filtered — RStudio emits them at
+  `ERROR`, above any threshold the app can set.
+
 ### Changed
 
 - Deploys now copy only the app files (OnDemand templates plus
