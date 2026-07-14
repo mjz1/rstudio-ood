@@ -43,10 +43,10 @@ dir; sessions and `sync_images` compare that stamp against `main/VERSION`
 update command when they differ. Nothing self-updates — the notice is the whole
 mechanism, and it fires only on releases because only releases move main.
 
-Not every merge to dev needs a release; cut one when the accumulated changes
-are worth downstream installs picking up. During pre-announcement bake-in
-(`0.9.x`), releases are free — the only "user" is the maintainer's own stable
-app.
+Not every merge to dev needs a release — let changes accumulate and cut one
+when the bundle is worth a changelog section, or when something must actually
+reach users. The `[Unreleased]` section of the changelog is where in-flight
+work lives in the meantime.
 
 `--app-only` deliberately skips the interview: redeploying an edit must not be
 able to change your storage or partitions behind your back. The staging copy

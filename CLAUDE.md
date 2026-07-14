@@ -48,10 +48,16 @@ an unreleased commit in every future user's install. Therefore:
   (dev or a feature branch) as its own staging app; stable (`rstudio_dev`)
   deploys from main
   (`git switch main && ./install.sh --app-only && git switch dev`).
-- **Versioning**: pre-announcement bake-in lives on `0.9.x` -- release
-  liberally, they are free while the user base is one person. `v1.0.0` is the
+- **Versioning**: pre-announcement bake-in lives on `0.9.x`; `v1.0.0` is the
   announcement to the lab itself. After that, bump when downstream installs
   should update (the notice fires on any VERSION difference).
+- **Let changes ACCUMULATE on dev; a release is a meaningful bundle, not a
+  reflex.** Do not cut a release per change -- v0.9.1..v0.9.7 landed in one
+  evening, one of them for a single link attribute, and that is version-number
+  spam (maintainer's words: "ridiculous"). Commit to dev, stage if it needs a
+  test launch, and release when there is a coherent set worth a changelog
+  section -- or when something must actually reach stable/users. Demos are not
+  a reason to release.
 - **Every user-visible change adds a `CHANGELOG.md` [Unreleased] entry in the
   same commit** (Added / Changed / Fixed / Removed). This is not bookkeeping:
   the update notice tells users a new version exists, and the changelog is the
