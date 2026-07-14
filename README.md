@@ -122,8 +122,8 @@ integrations, and they are not the same thing:
 - **GitHub Copilot** (`copilot-enabled=1`) — RStudio's built-in inline
   completions, backed by the bundled `copilot-language-server`. Sign in under
   **Tools → Global Options → Copilot** with your GitHub account. If your
-  institution provides Copilot (MSK does), **this is the route that needs no
-  extra credentials and no spend** — and it is the one to try first.
+  institution provides Copilot (MSK does), **this needs no extra credentials
+  and no spend — verified working here** for inline completion.
 - **Posit Assistant** (`posit-assistant-enabled=1`) — the newer chat/agent pane.
   It prompts to install, then reports *"unable to connect"*, because it is a
   **hosted commercial service**: the backend talks to `gateway.posit.ai`
