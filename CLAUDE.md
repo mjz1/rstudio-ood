@@ -29,6 +29,26 @@ directory). This repo is the **source**; the app directory is a **deploy target*
   edit, checkout and stash was instantly live. If you find yourself editing files
   under `~/ondemand/`, you are editing production.
 
+## Branching and releases (binding, for agents and humans alike)
+
+**master contains released code only, because master IS the distribution
+channel**: the `curl | bash` install URL serves master, and the update notice
+compares installs against `master/VERSION`. An unreleased commit on master is
+an unreleased commit in every future user's install. Therefore:
+
+- **All work happens on `dev`** (feature branches optional; merge them to dev).
+  Never commit directly to master.
+- **master moves only via `./release.sh X.Y.Z`**, which verifies the suite,
+  merges dev, writes VERSION (VERSION always equals the latest tag -- never
+  edit it by hand), tags, pushes, and re-syncs dev.
+- **Deploy targets follow branches**: staging (`rstudio_next`) deploys from
+  dev; stable (`rstudio_dev`) deploys from master
+  (`git switch master && ./install.sh --app-only && git switch dev`).
+- **Versioning**: pre-announcement bake-in lives on `0.9.x` -- release
+  liberally, they are free while the user base is one person. `v1.0.0` is the
+  announcement to the lab itself. After that, bump when downstream installs
+  should update (the notice fires on any VERSION difference).
+
 ## Ground truth about this environment
 
 - **The portal is not this machine.** OnDemand renders the ERB templates inside

@@ -22,12 +22,30 @@ warns if you run it from there.
 | `./install.sh --app-only` | routine deploy: push your edits live, touch nothing else |
 | `./install.sh --app-only --app-dir ~/ondemand/dev/rstudio_next --app-name "RStudio Server (next)"` | deploy a staging app |
 
-**Signalling users to update:** bump the `VERSION` file when a change is worth
-downstream installs picking up. Deploys stamp `.deployed-version` in the app
-dir; sessions and `sync_images` compare that stamp against the repo's `VERSION`
-(3s, silent-fail) and print a one-line notice with the update command when they
-differ. Routine commits don't need a bump — the notice is for "you want this"
-moments, not every push.
+## Branching, releases, and how updates reach users
+
+**master is the distribution channel**: `curl | bash` serves it, and the
+update notice compares every install against `master/VERSION`. So master holds
+released code only, and the workflow follows from that:
+
+| | |
+|---|---|
+| daily work | on `dev` (feature branches optional, merged to dev) |
+| release | `./release.sh X.Y.Z` — suite check, merge dev→master, VERSION stamp, tag, push |
+| staging app | deploys from `dev` |
+| stable app | deploys from `master`: `git switch master && ./install.sh --app-only && git switch dev` |
+| `VERSION` | always equals the latest tag; written by release.sh, never by hand |
+
+**How users hear about releases:** deploys stamp `.deployed-version` in the app
+dir; sessions and `sync_images` compare that stamp against `master/VERSION`
+(3-second fetch, silent on any failure) and print a one-line notice with the
+update command when they differ. Nothing self-updates — the notice is the whole
+mechanism, and it fires only on releases because only releases move master.
+
+Not every merge to dev needs a release; cut one when the accumulated changes
+are worth downstream installs picking up. During pre-announcement bake-in
+(`0.9.x`), releases are free — the only "user" is the maintainer's own stable
+app.
 
 `--app-only` deliberately skips the interview: redeploying an edit must not be
 able to change your storage or partitions behind your back. The staging copy
