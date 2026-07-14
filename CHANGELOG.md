@@ -17,6 +17,13 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 _Nothing yet._
 
+## [0.9.7] - 2026-07-14
+
+### Changed
+
+- The "See what changed" link in the launch form opens in a new tab, so
+  reading the changelog no longer navigates away from a half-filled form.
+
 ## [0.9.6] - 2026-07-13
 
 ### Changed
@@ -159,7 +166,8 @@ became something another person could install.
   are bash-only instead of having `.bashrc` edited pointlessly; an existing
   `r-wrappers.sh` source line is found across chained rc files.
 
-[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v0.9.6...HEAD
+[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v0.9.7...HEAD
+[0.9.7]: https://github.com/mjz1/rstudio-ood/compare/v0.9.6...v0.9.7
 [0.9.6]: https://github.com/mjz1/rstudio-ood/compare/v0.9.5...v0.9.6
 [0.9.5]: https://github.com/mjz1/rstudio-ood/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/mjz1/rstudio-ood/compare/v0.9.3...v0.9.4
