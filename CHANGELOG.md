@@ -10,12 +10,18 @@ breaking changes are still cheap. `1.0.0` will mark the release to the lab.
 Update an existing install to the latest release with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only
+curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash -s -- --app-only
 ```
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- The default branch is now `main`. This matters more here than in most repos:
+  the branch name is part of the install URL and the update-notice check, and
+  `raw.githubusercontent.com` does not redirect renamed branches. Installs
+  updated from this release onward use the new URLs; the old `master` raw URLs
+  stop resolving, so update any pinned copies of the one-liner.
 
 ## [0.9.5] - 2026-07-13
 

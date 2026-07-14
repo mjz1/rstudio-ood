@@ -24,24 +24,24 @@ warns if you run it from there.
 
 ## Branching, releases, and how updates reach users
 
-**master is the distribution channel**: `curl | bash` serves it, and the
-update notice compares every install against `master/VERSION`. So master holds
+**main is the distribution channel**: `curl | bash` serves it, and the
+update notice compares every install against `main/VERSION`. So main holds
 released code only, and the workflow follows from that:
 
 | | |
 |---|---|
 | daily work | on `dev` (feature branches optional, merged to dev) |
-| release | `./release.sh X.Y.Z` — suite check, merge dev→master, VERSION stamp, tag, push |
-| staging apps | `./stage.sh` on any non-master branch — dev gets "RStudio Server (dev)", `feat/x` gets "(feat/x)" |
-| stable app | deploys from `master`: `git switch master && ./install.sh --app-only && git switch dev` |
+| release | `./release.sh X.Y.Z` — suite check, merge dev→main, VERSION stamp, tag, push |
+| staging apps | `./stage.sh` on any non-main branch — dev gets "RStudio Server (dev)", `feat/x` gets "(feat/x)" |
+| stable app | deploys from `main`: `git switch main && ./install.sh --app-only && git switch dev` |
 | `VERSION` | always equals the latest tag; written by release.sh, never by hand |
 | `CHANGELOG.md` | every user-visible change adds an `[Unreleased]` entry as it lands; `release.sh` refuses to release without one, then rolls it into the version |
 
 **How users hear about releases:** deploys stamp `.deployed-version` in the app
-dir; sessions and `sync_images` compare that stamp against `master/VERSION`
+dir; sessions and `sync_images` compare that stamp against `main/VERSION`
 (3-second fetch, silent on any failure) and print a one-line notice with the
 update command when they differ. Nothing self-updates — the notice is the whole
-mechanism, and it fires only on releases because only releases move master.
+mechanism, and it fires only on releases because only releases move main.
 
 Not every merge to dev needs a release; cut one when the accumulated changes
 are worth downstream installs picking up. During pre-announcement bake-in

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# release.sh X.Y.Z -- the ONLY way master moves.
+# release.sh X.Y.Z -- the ONLY way main moves.
 #
-# master is what `curl | bash` serves and what the update notice reads, so it
+# main is what `curl | bash` serves and what the update notice reads, so it
 # must contain released code only. This script is the release: it verifies the
-# suite on dev, merges dev into master, writes VERSION (which must always equal
+# suite on dev, merges dev into main, writes VERSION (which must always equal
 # the latest tag -- so no hand edits), tags, pushes, and re-syncs dev.
 #
 #   ./release.sh 0.9.1
 #
-# Afterwards, deploy the stable app FROM master:
-#   git switch master && ./install.sh --app-only && git switch dev
+# Afterwards, deploy the stable app FROM main:
+#   git switch main && ./install.sh --app-only && git switch dev
 #
 set -euo pipefail
 cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
@@ -61,9 +61,9 @@ git add CHANGELOG.md
 git commit -q -m "changelog: roll [Unreleased] into v$v"
 git push -q origin dev
 
-echo "==> merge dev -> master, stamp VERSION=$v, tag v$v"
-git checkout -q master
-git pull -q origin master
+echo "==> merge dev -> main, stamp VERSION=$v, tag v$v"
+git checkout -q main
+git pull -q origin main
 git merge --no-ff -q dev -m "release v$v"
 echo "$v" > VERSION
 git add VERSION
@@ -72,7 +72,7 @@ git commit -q -m "v$v"
 # so it matched nothing and v0.9.2 was tagged with an empty body.
 notes="$(awk -v want="## [$v]" 'index($0, want)==1 {f=1;next} /^## \[/{f=0} f' CHANGELOG.md)"
 git tag -a "v$v" -m "v$v" -m "$notes"
-git push -q origin master --tags
+git push -q origin main --tags
 
 # Publish a GitHub Release from the changelog section, so the "what changed"
 # link in the update notice lands on a page that renders the notes. Optional:
@@ -87,10 +87,10 @@ fi
 
 echo "==> sync dev with the release"
 git checkout -q dev
-git merge -q master
+git merge -q main
 git push -q origin dev
 
 echo
 echo "released v$v."
-echo "  deploy stable:  git switch master && ./install.sh --app-only && git switch dev"
+echo "  deploy stable:  git switch main && ./install.sh --app-only && git switch dev"
 echo "  (staging keeps deploying from dev)"

@@ -386,11 +386,11 @@ main() {
     if [[ -r ${_appdir}/.deployed-version ]]; then
         local _dep _latest
         _dep="$(awk '{print $1}' "${_appdir}/.deployed-version" 2>/dev/null)"
-        _latest="$(curl -fsS --max-time 3 https://raw.githubusercontent.com/mjz1/rstudio-ood/master/VERSION 2>/dev/null | head -1)"
+        _latest="$(curl -fsS --max-time 3 https://raw.githubusercontent.com/mjz1/rstudio-ood/main/VERSION 2>/dev/null | head -1)"
         if [[ -n $_latest && -n $_dep && $_latest != "$_dep" ]]; then
             warn "app update available: $_dep -> $_latest"
-            log  "    what changed: https://github.com/mjz1/rstudio-ood/blob/master/CHANGELOG.md"
-            log  "    update: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only"
+            log  "    what changed: https://github.com/mjz1/rstudio-ood/blob/main/CHANGELOG.md"
+            log  "    update: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash -s -- --app-only"
         fi
     fi
 
