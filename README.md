@@ -34,7 +34,7 @@ behave exactly as before, so trying it risks nothing.
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash
 ```
 
 That runs an interview (it reads your answers from the terminal even though the
@@ -71,7 +71,7 @@ and open **Interactive Apps → RStudio Server** in OnDemand:
 app files and touches nothing else (not your config, not your libraries):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only
+curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash -s -- --app-only
 ```
 
 You don't need to poll for updates: when a newer version exists, the launch

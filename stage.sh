@@ -9,8 +9,8 @@
 #
 # Branch -> app mapping: branch `feat/x` becomes ~/ondemand/dev/rstudio_stage_feat_x,
 # listed in OnDemand as "RStudio Server (feat/x)". The stable app (rstudio_dev)
-# is NOT part of this scheme: it deploys from master only, via
-#   git switch master && ./install.sh --app-only && git switch dev
+# is NOT part of this scheme: it deploys from main only, via
+#   git switch main && ./install.sh --app-only && git switch dev
 #
 # All staged apps share the one config, the same image set, and the same session
 # slots -- so a staged app can resume a real slot to test against real state.
@@ -64,9 +64,9 @@ case "${1:-deploy}" in
     deploy)
         branch="$(git branch --show-current)"
         [[ -n $branch ]] || { echo "error: detached HEAD; check out a branch" >&2; exit 1; }
-        if [[ $branch == master ]]; then
-            echo "error: master deploys to the STABLE app, not a staging one:" >&2
-            echo "       git switch master && ./install.sh --app-only && git switch dev" >&2
+        if [[ $branch == main ]]; then
+            echo "error: main deploys to the STABLE app, not a staging one:" >&2
+            echo "       git switch main && ./install.sh --app-only && git switch dev" >&2
             exit 1
         fi
         dir="$BASE/${PREFIX}$(sanitize "$branch")"

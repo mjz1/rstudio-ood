@@ -10,12 +10,22 @@ breaking changes are still cheap. `1.0.0` will mark the release to the lab.
 Update an existing install to the latest release with:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only
+curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash -s -- --app-only
 ```
 
 ## [Unreleased]
 
 _Nothing yet._
+
+## [0.9.6] - 2026-07-13
+
+### Changed
+
+- The default branch is now `main`. This matters more here than in most repos:
+  the branch name is part of the install URL and the update-notice check, and
+  `raw.githubusercontent.com` does not redirect renamed branches. Installs
+  updated from this release onward use the new URLs; the old `master` raw URLs
+  stop resolving, so update any pinned copies of the one-liner.
 
 ## [0.9.5] - 2026-07-13
 
@@ -149,7 +159,8 @@ became something another person could install.
   are bash-only instead of having `.bashrc` edited pointlessly; an existing
   `r-wrappers.sh` source line is found across chained rc files.
 
-[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v0.9.5...HEAD
+[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v0.9.6...HEAD
+[0.9.6]: https://github.com/mjz1/rstudio-ood/compare/v0.9.5...v0.9.6
 [0.9.5]: https://github.com/mjz1/rstudio-ood/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/mjz1/rstudio-ood/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/mjz1/rstudio-ood/compare/v0.9.2...v0.9.3

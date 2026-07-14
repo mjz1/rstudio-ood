@@ -15,7 +15,7 @@
 #   ./install.sh --image-dir /data1/lab/shared/rstudio --no-sync
 #
 # Or run it straight from the internet, no checkout needed:
-#   curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash
 #
 # This repo is NOT the app directory. Open OnDemand runs whatever sits in
 # ~/ondemand/dev/<app>, so installing is a copy: edit here, deploy with
@@ -28,7 +28,7 @@
 set -euo pipefail
 
 REPO="${RSTUDIO_DEV_REPO:-mjz1/rstudio-ood}"
-REF="${RSTUDIO_DEV_REF:-master}"
+REF="${RSTUDIO_DEV_REF:-main}"
 
 # ${BASH_SOURCE[0]} is unset when the script is piped into bash (`curl | bash`),
 # which trips `set -u`; the :- default yields an empty path whose dirname is `.`,

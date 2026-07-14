@@ -26,7 +26,7 @@ name: ERB templates
 on:
   pull_request:
   push:
-    branches: [master, dev]
+    branches: [main, dev]
   workflow_dispatch:
 
 jobs:

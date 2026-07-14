@@ -34,20 +34,20 @@ directory). This repo is the **source**; the app directory is a **deploy target*
 
 ## Branching and releases (binding, for agents and humans alike)
 
-**master contains released code only, because master IS the distribution
-channel**: the `curl | bash` install URL serves master, and the update notice
-compares installs against `master/VERSION`. An unreleased commit on master is
+**main contains released code only, because main IS the distribution
+channel**: the `curl | bash` install URL serves main, and the update notice
+compares installs against `main/VERSION`. An unreleased commit on main is
 an unreleased commit in every future user's install. Therefore:
 
 - **All work happens on `dev`** (feature branches optional; merge them to dev).
-  Never commit directly to master.
-- **master moves only via `./release.sh X.Y.Z`**, which verifies the suite,
+  Never commit directly to main.
+- **main moves only via `./release.sh X.Y.Z`**, which verifies the suite,
   merges dev, writes VERSION (VERSION always equals the latest tag -- never
   edit it by hand), tags, pushes, and re-syncs dev.
 - **Deploy targets follow branches**: `./stage.sh` deploys the current branch
   (dev or a feature branch) as its own staging app; stable (`rstudio_dev`)
-  deploys from master
-  (`git switch master && ./install.sh --app-only && git switch dev`).
+  deploys from main
+  (`git switch main && ./install.sh --app-only && git switch dev`).
 - **Versioning**: pre-announcement bake-in lives on `0.9.x` -- release
   liberally, they are free while the user base is one person. `v1.0.0` is the
   announcement to the lab itself. After that, bump when downstream installs

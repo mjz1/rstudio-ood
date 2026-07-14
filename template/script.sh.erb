@@ -141,12 +141,12 @@ fi
 # Strictly non-blocking: 3s timeout, every failure silent -- a GitHub outage must
 # not delay or mark a launch. Surfaced in output.log here and in the R console
 # banner via the rsession wrapper. Updating remains a deliberate user action:
-#   curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only
+#   curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash -s -- --app-only
 UPDATE_NOTICE=""
 _app_dir="<%= app_dir %>"
 if [ -n "${_app_dir}" ] && [ -r "${_app_dir}/.deployed-version" ]; then
   _dep="$(awk '{print $1}' "${_app_dir}/.deployed-version" 2>/dev/null)"
-  _latest="$(curl -fsS --max-time 3 https://raw.githubusercontent.com/mjz1/rstudio-ood/master/VERSION 2>/dev/null | head -1)"
+  _latest="$(curl -fsS --max-time 3 https://raw.githubusercontent.com/mjz1/rstudio-ood/main/VERSION 2>/dev/null | head -1)"
   # Cache the verdict for the LAUNCH FORM. The form renders in the PUN, where a
   # network call would add latency to every launch for every user -- so the
   # compute node (which already has the answer) writes it, and the form just
@@ -154,7 +154,7 @@ if [ -n "${_app_dir}" ] && [ -r "${_app_dir}/.deployed-version" ]; then
   _cache="${HOME}/.config/rstudio_dev/update-notice"
   mkdir -p "$(dirname "${_cache}")" 2>/dev/null || true
   if [ -n "${_latest}" ] && [ -n "${_dep}" ] && [ "${_latest}" != "${_dep}" ]; then
-    UPDATE_NOTICE="rstudio-ood ${_latest} is available (this app is ${_dep}). What changed: https://github.com/mjz1/rstudio-ood/blob/master/CHANGELOG.md | Update: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only"
+    UPDATE_NOTICE="rstudio-ood ${_latest} is available (this app is ${_dep}). What changed: https://github.com/mjz1/rstudio-ood/blob/main/CHANGELOG.md | Update: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash -s -- --app-only"
     echo "NOTE: ${UPDATE_NOTICE}"
     _latest_for_r="${_latest}"
     _dep_for_r="${_dep}"
@@ -274,9 +274,9 @@ local({
       strrep("\u2500", 62), "\n",
       "  rstudio-ood update available:  ", deployed, " \u2192 ", latest, "\n",
       "  What changed:\n",
-      "    https://github.com/mjz1/rstudio-ood/blob/master/CHANGELOG.md\n",
+      "    https://github.com/mjz1/rstudio-ood/blob/main/CHANGELOG.md\n",
       "  Update (from a terminal):\n",
-      "    curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only\n",
+      "    curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | bash -s -- --app-only\n",
       strrep("\u2500", 62)
     ))
   }
