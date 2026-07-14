@@ -1,7 +1,11 @@
 # Developing and deploying
 
 **This repo is not the app directory.** Open OnDemand runs whatever sits in
-`~/ondemand/dev/<app>/`; this repo is the source, and installing is a copy.
+`~/ondemand/dev/<app>/`; this repo is the source, and installing is a copy —
+of the app files only (`APP_FILES` in `install.sh`): the OnDemand templates
+plus the bash files whose runtime home is the deployed directory. Repo
+tooling (installer, tests, docs, release scripts) stays out of the deploy
+target, so the app dir never looks like a checkout.
 This separation exists because the repo *used to be* the sandbox directory, so
 every edit, branch switch and stash was instantly live. If you find yourself
 editing files under `~/ondemand/`, you are editing production — `install.sh`
@@ -107,8 +111,8 @@ library actually exists. Two consequences:
   one option pointed at a library directory that did not exist; R ignores a
   missing `R_LIBS_USER` silently, so that failure was invisible.
 
-(`form.yml.bak` is the retired hard-coded form, kept for reference; OnDemand
-reads `form.yml.erb`.)
+(The retired hard-coded form lived at `form.yml.bak` until v0.9.7; it is in the
+git history if you need it. OnDemand reads `form.yml.erb`.)
 
 ## Running rootless: two things the image needs help with
 

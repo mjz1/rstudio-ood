@@ -15,7 +15,21 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- Deploys now copy only the app files (OnDemand templates plus
+  `sync-images.sh`, `r-wrappers.sh`, `conf.sh`, `ui.sh`) instead of the whole
+  repo. Repo tooling — installer, tests, docs, release scripts — no longer
+  lands in the app directory, and the next deploy removes the copies that
+  earlier deploys left there. Nothing you use moves: `~/.alias` keeps sourcing
+  `r-wrappers.sh` from the same place, and `sync-images.sh` still runs from
+  the app directory. If you kept a habit of running the deployed `install.sh`,
+  run it from a checkout (or `curl | bash`) instead.
+
+### Removed
+
+- `form.yml.bak`, the retired hard-coded launch form, is gone from the repo
+  (and from deployed app directories). It lives on in git history.
 
 ## [0.9.7] - 2026-07-14
 
