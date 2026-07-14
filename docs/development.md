@@ -22,6 +22,13 @@ warns if you run it from there.
 | `./install.sh --app-only` | routine deploy: push your edits live, touch nothing else |
 | `./install.sh --app-only --app-dir ~/ondemand/dev/rstudio_next --app-name "RStudio Server (next)"` | deploy a staging app |
 
+**Signalling users to update:** bump the `VERSION` file when a change is worth
+downstream installs picking up. Deploys stamp `.deployed-version` in the app
+dir; sessions and `sync_images` compare that stamp against the repo's `VERSION`
+(3s, silent-fail) and print a one-line notice with the update command when they
+differ. Routine commits don't need a bump — the notice is for "you want this"
+moments, not every push.
+
 `--app-only` deliberately skips the interview: redeploying an edit must not be
 able to change your storage or partitions behind your back. The staging copy
 appears as its own entry in OnDemand, giving you somewhere to click Launch that

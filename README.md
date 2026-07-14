@@ -67,6 +67,18 @@ and open **Interactive Apps → RStudio Server** in OnDemand:
        alt="The launch form: Session picker, new session name, labelled Queue dropdown, cores/GPUs/hours/memory, and an RStudio image select showing R 4.6.1 with RStudio 2026.06.0">
 </p>
 
+**Updating later** is the same one-liner plus `--app-only` — it refreshes the
+app files and touches nothing else (not your config, not your libraries):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only
+```
+
+You don't need to poll for updates: when a newer version exists, the R console
+prints a one-line notice at session start (and `sync_images` mentions it). The
+check is a 3-second, silently-failing version lookup — **nothing ever updates
+itself**; updating is always your deliberate command above.
+
 Details — every flag, requirements (incl. the OnDemand "sandbox apps" switch),
 what it touches, uninstalling, sharing images across a lab, **migrating
 existing R libraries**, other clusters, and the full config reference:

@@ -56,6 +56,7 @@
   # Emitted as a bash list and filtered against what exists on the compute node --
   # singularity fails outright on a bind source that is not there.
   singularity = setting.call('RSTUDIO_SINGULARITY', 'singularity')
+  app_dir     = setting.call('RSTUDIO_APP_DIR', '')
   bind_paths  = setting.call('RSTUDIO_BIND_PATHS',
                              '/data1,/run/munge,/etc/slurm,/usr/lib64/slurm,/usr/lib64/libmunge.so.2')
                   .split(',').map(&:strip).reject(&:empty?)
@@ -133,6 +134,24 @@ fi
 # NOT $HOME proper, which is small -- so slot state does not consume the home
 # quota. The slot dir persists, so a slot resumes and shows in the Session
 # dropdown.
+# ---- update notice (never an auto-update) --------------------------------------
+# Compares the version stamped at deploy time against the repo's current VERSION.
+# Strictly non-blocking: 3s timeout, every failure silent -- a GitHub outage must
+# not delay or mark a launch. Surfaced in output.log here and in the R console
+# banner via the rsession wrapper. Updating remains a deliberate user action:
+#   curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only
+UPDATE_NOTICE=""
+_app_dir="<%= app_dir %>"
+if [ -n "${_app_dir}" ] && [ -r "${_app_dir}/.deployed-version" ]; then
+  _dep="$(awk '{print $1}' "${_app_dir}/.deployed-version" 2>/dev/null)"
+  _latest="$(curl -fsS --max-time 3 https://raw.githubusercontent.com/mjz1/rstudio-ood/master/VERSION 2>/dev/null | head -1)"
+  if [ -n "${_latest}" ] && [ -n "${_dep}" ] && [ "${_latest}" != "${_dep}" ]; then
+    UPDATE_NOTICE="rstudio-ood ${_latest} is available (this app is ${_dep}); update: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only"
+    echo "NOTE: ${UPDATE_NOTICE}"
+  fi
+fi
+# --------------------------------------------------------------------------------
+
 SESSION_SLOT="<%= slot %>"
 RSTUDIO_WORK_DIR="<%= work_dir %>"
 SLOT_DIR="${RSTUDIO_WORK_DIR}/.rstudio-sessions/${SESSION_SLOT}"
@@ -179,6 +198,7 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # project's renv .Rprofile; our profile re-sources the image's own site file
   # so the CRAN snapshot etc. are preserved.
   export RSTUDIO_SESSION_SLOT="${SESSION_SLOT}"
+  export RSTUDIO_UPDATE_NOTICE="${UPDATE_NOTICE}"
   export R_PROFILE="/tmp/site-profile.R"
 
   # System-default prefs (written to \$TMPDIR/xdg above; \$TMPDIR is bound to
@@ -232,6 +252,8 @@ local({
     options(prompt = sprintf("[%s] > ", slot))
     message(sprintf("-- RStudio session slot: %s --", slot))
   }
+  upd <- Sys.getenv("RSTUDIO_UPDATE_NOTICE", unset = "")
+  if (nzchar(upd)) message("-- ", upd, " --")
 })
 RPROFILE
 

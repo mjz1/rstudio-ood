@@ -496,6 +496,17 @@ deploy_app() {
     fi
     dry || chmod +x "$APP_DIR/sync-images.sh" 2>/dev/null || true
 
+    # Stamp the deployed version: repo VERSION plus the commit when a checkout
+    # provides one. The launch-time update notice compares this stamp against
+    # the repo's current VERSION -- notice only, never an auto-update.
+    if ! dry; then
+        {
+            cat "$SRC_DIR/VERSION" 2>/dev/null || echo unknown
+            git -C "$SRC_DIR" rev-parse --short HEAD 2>/dev/null || echo -
+            date -I
+        } | paste -sd' ' - >"$APP_DIR/.deployed-version" 2>/dev/null || true
+    fi
+
     # A second copy under a different name is what makes a staging app appear as
     # its own entry in OnDemand rather than a second row with the same title.
     if [[ -n $APP_NAME ]]; then
@@ -1021,6 +1032,9 @@ RSTUDIO_QUEUES=$QUEUES_OUT
 # Partition that sync-images.sh submits image pulls to. The pull is ~2 GB per
 # image plus a squashfs build, so it does not belong on a login node.
 RSTUDIO_SYNC_PARTITION=$SYNC_PARTITION
+
+# Where the app was deployed (used by the update-available notice).
+RSTUDIO_APP_DIR=$APP_DIR
 EOF
 )"
 if dry; then

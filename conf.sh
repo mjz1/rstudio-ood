@@ -25,7 +25,7 @@ _rsd_load_conf() {
         # malicious key is ignored rather than becoming a variable. Keep this in
         # step with what install.sh writes.
         case "$key" in
-            RSTUDIO_IMAGE_DIR|R_LIBS_ROOT|RSTUDIO_WORK_DIR|RSTUDIO_BIND_PATHS) ;;
+            RSTUDIO_IMAGE_DIR|R_LIBS_ROOT|RSTUDIO_WORK_DIR|RSTUDIO_BIND_PATHS|RSTUDIO_APP_DIR) ;;
             RSTUDIO_VERSIONS|RSTUDIO_SYNC_ROLE|RSTUDIO_SINGULARITY) ;;
             RSTUDIO_CLUSTER|RSTUDIO_QUEUE|RSTUDIO_QUEUES|RSTUDIO_SYNC_PARTITION|RSTUDIO_TORCH_CUDA) ;;
             *) continue ;;

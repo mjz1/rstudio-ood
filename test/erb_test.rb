@@ -120,6 +120,11 @@ File.write(File.join(IMAGES, 'images.json'), JSON.pretty_generate(
 # CI, where none of it is set. Scrub first.
 ENV.keys.grep(/\A(RSTUDIO_|R_LIBS_)/).each { |k| ENV.delete(k) }
 
+# A deployed app dir with a STALE version stamp, for the update-notice check.
+APPDIR = File.join(FIX, 'app')
+FileUtils.mkdir_p(APPDIR)
+File.write(File.join(APPDIR, '.deployed-version'), "0.9.0 abc1234 2026-01-01\n")
+
 CONFIG = File.join(FIX, 'config')
 File.write(CONFIG, <<~CONF)
   RSTUDIO_IMAGE_DIR=#{IMAGES}
@@ -130,6 +135,7 @@ File.write(CONFIG, <<~CONF)
   RSTUDIO_QUEUE=componc_cpu
   RSTUDIO_QUEUES=componc_cpu|componc_cpu — CPU · <=7d,componc_gpu_int|componc_gpu_int — GPU H100/H200 · <=1d · interactive
   RSTUDIO_SINGULARITY=singularity
+  RSTUDIO_APP_DIR=#{APPDIR}
 CONF
 ENV['RSTUDIO_DEV_CONFIG'] = CONFIG
 
@@ -225,6 +231,13 @@ end
 check('missing bind paths are skipped, not fatal') { sh.include?('bind path not present on this node, skipping') }
 check('the job script stamps the slot as used at launch (fixes the "last used" hint)') do
   sh.include?('touch "${SLOT_DIR}"')
+end
+check('update NOTICE: non-blocking version check, surfaced in the R banner, never auto-applied') do
+  sh.include?("_app_dir=\"#{APPDIR}\"") &&                     # stamp path from config
+    sh.include?('curl -fsS --max-time 3') &&                     # bounded, silent-fail
+    sh.include?('export RSTUDIO_UPDATE_NOTICE="${UPDATE_NOTICE}"') &&
+    sh.include?('Sys.getenv("RSTUDIO_UPDATE_NOTICE"') &&         # printed by site profile
+    !sh.match?(/git pull|--app-only[^"]*\|\s*bash.*<%/)         # no self-update machinery
 end
 check('idle-suspend is disabled (dedicated allocation; suspension only races renv)') do
   sh.include?('session-timeout-minutes=0') &&
