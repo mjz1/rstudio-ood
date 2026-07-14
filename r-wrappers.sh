@@ -283,6 +283,24 @@ rstudio_slots() {
 # form stays in control per session. Outside a session (variable unset) it
 # serves a harmless read-only default; the execute tool (run_r) additionally
 # needs BTW_RUN_R_ENABLED, which only an execute-mode session exports.
+#
+# --no-init-file is LOAD-BEARING, and not an optimisation. A stdio MCP server
+# speaks JSON-RPC over stdout, so ANY R startup chatter on stdout corrupts the
+# protocol -- the client reads a package banner where it expected a handshake
+# and the server never connects. Project .Rprofile files are full of such
+# chatter, and renv is the worst case: on a large project its startup sync
+# check prints "NOTE: Dependency discovery took N seconds..." to stdout AND
+# takes 20+ seconds doing it, blowing the client's 30s connect timeout as well
+# (measured: 32.3s startup, 77k files -- two independent fatal failures).
+# Skipping the profile closes the whole class rather than muting one source.
+#
+# It costs nothing, because the server does not need the project: it defines
+# tools and dials the session's socket. The tools EXECUTE in the R session,
+# which has renv fully loaded. mcptools/btw still resolve because renv exports
+# R_LIBS_USER (the project library) to child processes -- and outside renv,
+# R_LIBS_USER is the session's per-version library. If a project somehow needs
+# its profile, the narrower fix is an "env" block with
+# RENV_CONFIG_SYNCHRONIZED_CHECK=FALSE instead.
 rstudio_mcp_init() {
     local dir="${1:-.}" f
     [ -d "$dir" ] || { echo "no such directory: $dir" >&2; return 1; }
@@ -301,6 +319,7 @@ rstudio_mcp_init() {
     "r-session": {
       "command": "Rscript",
       "args": [
+        "--no-init-file",
         "-e",
         "mcptools::mcp_server(tools = do.call(btw::btw_tools, as.list(strsplit(Sys.getenv('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo'), ',')[[1]])))"
       ]
@@ -315,6 +334,7 @@ SNIPPET
     "r-session": {
       "command": "Rscript",
       "args": [
+        "--no-init-file",
         "-e",
         "mcptools::mcp_server(tools = do.call(btw::btw_tools, as.list(strsplit(Sys.getenv('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo'), ',')[[1]])))"
       ]
