@@ -52,6 +52,14 @@ an unreleased commit in every future user's install. Therefore:
   liberally, they are free while the user base is one person. `v1.0.0` is the
   announcement to the lab itself. After that, bump when downstream installs
   should update (the notice fires on any VERSION difference).
+- **Every user-visible change adds a `CHANGELOG.md` [Unreleased] entry in the
+  same commit** (Added / Changed / Fixed / Removed). This is not bookkeeping:
+  the update notice tells users a new version exists, and the changelog is the
+  only place that tells them *why they should care*. `release.sh` refuses to
+  release while [Unreleased] is empty, then rolls it into the version section,
+  dates it, fixes the compare links, and copies it into the tag message.
+  Internal-only churn (tests, refactors with no user-visible effect) does not
+  need an entry.
 
 ## Ground truth about this environment
 

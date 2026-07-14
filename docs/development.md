@@ -35,6 +35,7 @@ released code only, and the workflow follows from that:
 | staging apps | `./stage.sh` on any non-master branch — dev gets "RStudio Server (dev)", `feat/x` gets "(feat/x)" |
 | stable app | deploys from `master`: `git switch master && ./install.sh --app-only && git switch dev` |
 | `VERSION` | always equals the latest tag; written by release.sh, never by hand |
+| `CHANGELOG.md` | every user-visible change adds an `[Unreleased]` entry as it lands; `release.sh` refuses to release without one, then rolls it into the version |
 
 **How users hear about releases:** deploys stamp `.deployed-version` in the app
 dir; sessions and `sync_images` compare that stamp against `master/VERSION`

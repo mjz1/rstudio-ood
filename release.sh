@@ -25,6 +25,42 @@ git checkout -q dev
 git pull -q origin dev 2>/dev/null || true
 ./test/run.sh >/dev/null || { echo "error: test suite failed; not releasing" >&2; exit 1; }
 
+# A changelog nobody is forced to write is a changelog that rots. The Unreleased
+# section must say something -- if a release is worth cutting, it is worth one
+# line telling users what they get.
+echo "==> CHANGELOG must have Unreleased content"
+unreleased="$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f' CHANGELOG.md | grep -v '^\s*$' || true)"
+if [[ -z $unreleased || $unreleased == *"_Nothing yet._"* ]]; then
+    echo "error: CHANGELOG.md [Unreleased] is empty -- describe the release first" >&2
+    exit 1
+fi
+
+echo "==> roll CHANGELOG: [Unreleased] -> [$v]"
+python3 - "$v" <<'PY'
+import re, sys, datetime
+v = sys.argv[1]
+today = datetime.date.today().isoformat()
+s = open('CHANGELOG.md').read()
+
+# Rename Unreleased -> the version, and open a fresh empty Unreleased above it.
+s = s.replace('## [Unreleased]\n',
+              f'## [Unreleased]\n\n_Nothing yet._\n\n## [{v}] - {today}\n', 1)
+
+# Link refs: point Unreleased at the new tag, add a compare link for this release.
+prev = re.search(r'^\[(\d+\.\d+\.\d+)\]:', s[s.index('[Unreleased]:'):], re.M)
+prev_v = prev.group(1) if prev else None
+s = re.sub(r'^\[Unreleased\]: .*$',
+           f'[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v{v}...HEAD', s, flags=re.M)
+if prev_v:
+    s = s.replace(f'[{prev_v}]: ',
+                  f'[{v}]: https://github.com/mjz1/rstudio-ood/compare/v{prev_v}...v{v}\n[{prev_v}]: ', 1)
+open('CHANGELOG.md', 'w').write(s)
+print(f"  changelog rolled to {v} ({today})")
+PY
+git add CHANGELOG.md
+git commit -q -m "changelog: roll [Unreleased] into v$v"
+git push -q origin dev
+
 echo "==> merge dev -> master, stamp VERSION=$v, tag v$v"
 git checkout -q master
 git pull -q origin master
@@ -32,7 +68,8 @@ git merge --no-ff -q dev -m "release v$v"
 echo "$v" > VERSION
 git add VERSION
 git commit -q -m "v$v"
-git tag -a "v$v" -m "v$v"
+notes="$(awk -v want="## [$v]" '$0 ~ want {f=1;next} /^## \[/{f=0} f' CHANGELOG.md)"
+git tag -a "v$v" -m "v$v" -m "$notes"
 git push -q origin master --tags
 
 echo "==> sync dev with the release"
