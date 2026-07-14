@@ -17,6 +17,17 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh 
 
 _Nothing yet._
 
+## [0.9.4] - 2026-07-13
+
+### Added
+
+- The update notice now **links to this changelog**, in the launch form (a
+  clickable "See what changed"), the R console, and `sync_images`. A version
+  number tells you nothing; what changed is what lets you decide whether you
+  want it.
+- Releases are published on GitHub with their changelog section as the release
+  notes, so tags are readable rather than bare.
+
 ## [0.9.3] - 2026-07-13
 
 ### Added
@@ -129,7 +140,8 @@ became something another person could install.
   are bash-only instead of having `.bashrc` edited pointlessly; an existing
   `r-wrappers.sh` source line is found across chained rc files.
 
-[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/mjz1/rstudio-ood/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/mjz1/rstudio-ood/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/mjz1/rstudio-ood/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/mjz1/rstudio-ood/compare/v0.9.0...v0.9.1

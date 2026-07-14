@@ -389,6 +389,7 @@ main() {
         _latest="$(curl -fsS --max-time 3 https://raw.githubusercontent.com/mjz1/rstudio-ood/master/VERSION 2>/dev/null | head -1)"
         if [[ -n $_latest && -n $_dep && $_latest != "$_dep" ]]; then
             warn "app update available: $_dep -> $_latest"
+            log  "    what changed: https://github.com/mjz1/rstudio-ood/blob/master/CHANGELOG.md"
             log  "    update: curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/master/install.sh | bash -s -- --app-only"
         fi
     fi
