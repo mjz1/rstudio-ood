@@ -39,11 +39,12 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   two-repo "newest compatible, else era version" default, and renv for
   projects that must stay stable for years; the README's Known issues points
   at it.
-- README: the two `ERROR` lines every session logs at startup (the Posit
-  Assistant's Node backend warning about SQLite, and RStudio's memory display
-  reading an already-exited helper process) are documented as benign. They look
-  alarming, they are not, and they cannot be filtered — RStudio emits them at
-  `ERROR`, above any threshold the app can set.
+- README: the two `ERROR` lines every session logs (the Posit Assistant's
+  Node backend warning about SQLite, and RStudio's memory display reading an
+  already-exited process) are documented as benign. They look alarming, they
+  are not, and they cannot be filtered — RStudio emits them at `ERROR`, above
+  any threshold the app can set — but they now land in a per-session log file
+  instead of the R console (see Fixed).
 
 ### Changed
 
@@ -55,6 +56,19 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   `r-wrappers.sh` from the same place, and `sync-images.sh` still runs from
   the app directory. If you kept a habit of running the deployed `install.sh`,
   run it from a checkout (or `curl | bash`) instead.
+
+### Fixed
+
+- RStudio's internal log records no longer print into the R console. The
+  session process forwards its own stderr to the console, and the app's
+  logging override — needed so *server* startup failures reach `output.log` —
+  also pointed the session's logger at stderr, so benign records (chiefly the
+  memory monitor's `/proc` read races: `Proc stat file … missing value`, a
+  process exiting between enumeration and read) sprayed into every console,
+  timestamps and all. The session now logs to `logs/` inside the session's
+  OnDemand output directory: out of the console, kept for debugging, next to
+  `output.log`. The server keeps logging to stderr, so launch failures stay
+  visible in `output.log`.
 
 ### Removed
 

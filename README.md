@@ -260,19 +260,23 @@ and how the test suite works: **[docs/development.md](docs/development.md)**.
 
 ## Known issues
 
-- **`ERROR` lines in a session's log at startup are normal — ignore them.** Two
-  appear on every launch, and neither means anything went wrong:
+- **`ERROR` lines in the session's `logs/` directory are usually benign.** Two
+  appear routinely, and neither means anything went wrong:
   - `ExperimentalWarning: SQLite is an experimental feature …` — the Posit
     Assistant's Node backend prints this as it starts, and RStudio logs
     *anything* that backend writes as an `ERROR`, warnings included.
   - `Proc stat file: /proc/<pid>/status missing value — found only: 0 of: 2
-    keys` — RStudio's memory-usage display asks a helper process how much RAM
-    it is using a moment after that process has already exited.
+    keys` — RStudio's memory-usage display asks a process how much RAM it is
+    using a moment after that process has already exited. Harmless by
+    definition, and recurring: the monitor polls for as long as the session
+    runs.
 
-  Both fire once or twice as the session comes up and then stop. They cannot be
-  turned down: RStudio emits them at `ERROR`, which is above any log threshold
-  the app can set. A session that *genuinely* fails to start does not merely log
-  — it never connects.
+  They cannot be turned down — RStudio emits them at `ERROR`, above any log
+  threshold the app can set — but they no longer land anywhere a user has to
+  look: the session process logs to `logs/` inside the session's output
+  directory (next to `output.log`), not to the R console or `output.log`. A
+  session that *genuinely* fails to start does not merely log — it never
+  connects, and the server's own startup errors still go to `output.log`.
 - **`install.packages()` says a package "is not available" that clearly exists
   on CRAN.** Older R images pin their CRAN mirror to a dated snapshot from
   that R version's era (deliberate; the newest image tracks current CRAN), so
