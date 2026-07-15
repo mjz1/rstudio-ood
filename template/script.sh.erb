@@ -176,6 +176,11 @@ mkdir -p "${SLOT_DIR}/data" "${SHARED_CACHE}"
 touch "${SLOT_DIR}"
 echo "RStudio session slot: ${SESSION_SLOT}  (state in ${SLOT_DIR}/data; cache + renv shared)"
 
+# OnDemand's per-session output dir (we are cd'd into it here; output.log and
+# rsession.sh live in it). Captured before the `cd "${HOME}"` below -- the
+# rsession file logger writes here so its logs travel with the session.
+SESSION_DIR="${PWD}"
+
 # Generate an `rsession` wrapper script
 export RSESSION_WRAPPER_FILE="${PWD}/rsession.sh"
 (
@@ -296,12 +301,27 @@ chmod 600 "${TMPDIR}/database.conf"
 
 # rocker's install_rstudio.sh sets logger-type=syslog, and there is no syslog in
 # the container -- so rserver startup failures vanish silently and the only
-# symptom is `wait_until_port_used` timing out. Log to stderr so they land in
-# this job's output.log instead.
-cat > "${TMPDIR}/logging.conf" <<'LOGCONF'
+# symptom is `wait_until_port_used` timing out. Log rserver to stderr so they
+# land in this job's output.log instead.
+#
+# rsession must NOT log to stderr: after startup it captures its own stderr and
+# forwards it into the R console, so a stderr logger prints every log record --
+# e.g. the benign /proc read races from the memory-usage monitor ("Proc stat
+# file ... missing value": a short-lived process exiting between enumeration
+# and read) -- into the user's console, timestamps and all. (rocker's syslog
+# default never touched stderr, which is why stock images seem "quiet".) Log
+# rsession to a file in the session output dir instead: out of the console,
+# kept for debugging, right next to output.log.
+mkdir -p "${SESSION_DIR}/logs"
+cat > "${TMPDIR}/logging.conf" <<LOGCONF
 [*]
 log-level=warn
 logger-type=stderr
+
+[rsession]
+log-level=warn
+logger-type=file
+log-dir=${SESSION_DIR}/logs
 LOGCONF
 
 # Never IDLE-suspend the session. Suspension exists to free memory for other

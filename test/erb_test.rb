@@ -283,6 +283,18 @@ check('update NOTICE: non-blocking version check, surfaced in the R banner, neve
     sh.include?('What changed:') &&                              # banner links the changelog
     !sh.match?(/git pull|--app-only[^"]*\|\s*bash.*<%/)         # no self-update machinery
 end
+check('rserver logs to stderr (output.log), rsession to a file in the session dir') do
+  # rsession forwards its own stderr into the R console after startup, so a
+  # stderr logger for rsession sprays benign /proc-race ERRORs at the user.
+  # rserver must KEEP stderr: startup failures otherwise vanish (no syslog).
+  logconf = sh[/cat > "\$\{TMPDIR\}\/logging\.conf" <<LOGCONF\n(.*?)\nLOGCONF/m, 1].to_s
+  logconf.include?("[*]\nlog-level=warn\nlogger-type=stderr") &&
+    logconf.include?("[rsession]") &&
+    logconf[/\[rsession\].*?logger-type=(\w+)/m, 1] == 'file' &&
+    logconf.include?('log-dir=${SESSION_DIR}/logs') &&
+    sh.include?('mkdir -p "${SESSION_DIR}/logs"') &&
+    sh.include?('SESSION_DIR="${PWD}"')
+end
 check('idle-suspend is disabled (dedicated allocation; suspension only races renv)') do
   sh.include?('session-timeout-minutes=0') &&
     sh.include?('rsession.conf:/etc/rstudio/rsession.conf')
