@@ -22,9 +22,11 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   session's Terminal (Claude Code, Copilot CLI, any MCP client) see the live
   R session via the `mcptools` + `btw` R packages: list objects, describe
   in-memory data frames, look up package docs, and — in execute mode, with
-  the agent asking approval on every call — run R code in the session itself,
-  so an agent can develop notebook code chunk-by-chunk against live state
-  instead of re-rendering to find each bug. Enabled sessions auto-register at
+  the agent asking approval on every call — run R code in the session itself
+  and drive the R-package-development tools (`R CMD check`, tests, coverage,
+  roxygen docs, `load_all`), so an agent can develop notebook code
+  chunk-by-chunk against live state instead of re-rendering to find each bug,
+  or iterate on a package in place. Enabled sessions auto-register at
   startup (after renv activation, so project libraries work); one-time
   project setup is the new `rstudio_mcp_init` wrapper. Off is the default and
   changes nothing; no network ports are involved (node-local sockets only),

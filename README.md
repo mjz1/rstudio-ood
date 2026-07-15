@@ -159,6 +159,41 @@ integrations, and they are not the same thing:
   app blocks any of it: the backend starts cleanly, the image ships node, and
   compute nodes reach both gateways.
 
+**AI agent access (MCP).** A third, different integration: instead of a chat
+pane, it lets a *coding agent you run in the session's Terminal* — Claude Code,
+Copilot CLI, any MCP client — see and drive the **live R session**. Set **AI
+agent access** on the launch form to **Read-only** or **Read + execute** (Off is
+the default and changes nothing). Then, once per project:
+
+```r
+install.packages(c("mcptools", "btw"))   # into the project library
+```
+
+```bash
+rstudio_mcp_init            # writes ./.mcp.json (committable; the lab inherits it)
+claude                      # or your agent, run from the project in the Terminal
+```
+
+The agent gets tools with **no equivalent in its own toolbox**: list the objects
+you have loaded, describe an in-memory data frame, read R help and vignettes for
+installed packages, and see the file open in the editor. **Read + execute** adds
+`run_r` (the agent runs R *in your session*, against your loaded state, asking
+approval each call) and the R-package-development tools (`R CMD check`, tests,
+coverage, roxygen docs, `load_all`) — so an agent can build a notebook chunk by
+chunk, or iterate on a package, without re-rendering to find each bug. It
+deliberately does **not** serve files/git/web tools: your agent already has
+better ones, and two ways to do everything makes it pick the worse one.
+
+Why this survives you closing the laptop: the agent, its MCP server and the R
+session all run **on the compute node** over node-local sockets — your browser
+is only a viewer. Close the tab or sleep the machine and the work continues; on
+reconnect, the Terminal may need a **Ctrl+L** to redraw the agent's UI. It ends
+only when the job's walltime expires or you quit the session. Which tools are
+served is controlled per-launch by the form (via `RSTUDIO_MCP_TOOLS`), so the
+`.mcp.json` never needs editing; a read-only session never exposes `run_r`.
+Need a lab-specific capability btw lacks? Add an `ellmer::tool()` of your own to
+the server command — `mcptools` serves any ellmer tool, not just btw's.
+
 **Shell wrappers.** The same images and libraries from a terminal:
 
 ```bash

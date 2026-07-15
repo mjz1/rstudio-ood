@@ -73,14 +73,17 @@
   # btw tool groups served to the agent. Curated to the groups with no native
   # equivalent in a coding agent -- serving btw's files/git/etc. would give the
   # model two ways to do everything and it will pick the worse one half the
-  # time. run_r (the execute tool) is appended only in execute mode; btw
-  # additionally gates it behind BTW_RUN_R_ENABLED, exported below in execute
-  # mode only, so read-only really is read-only even if this list is
-  # overridden. Config/env can override the read set (RSTUDIO_MCP_TOOLS);
-  # scrubbed hard because it lands inside the wrapper heredoc.
+  # time. run_r (the execute tool) and pkg (R CMD check/test/coverage/document/
+  # load_all -- R package dev, with no coding-agent equivalent) are appended
+  # only in execute mode: pkg's check/test SOURCE AND RUN the package's own
+  # code, so they are execute-level, not read. run_r is additionally gated by
+  # btw behind BTW_RUN_R_ENABLED, exported below in execute mode only, so
+  # read-only really is read-only even if this list is overridden. Config/env
+  # can override the read set (RSTUDIO_MCP_TOOLS); scrubbed hard because it
+  # lands inside the wrapper heredoc.
   mcp_tools = setting.call('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo,ide')
                 .gsub(/[^A-Za-z0-9_,]/, '')
-  mcp_tools = "#{mcp_tools},run_r" if agent_access == 'execute'
+  mcp_tools = "#{mcp_tools},run_r,pkg" if agent_access == 'execute'
 -%>
 
 # Load the required environment

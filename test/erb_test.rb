@@ -328,9 +328,9 @@ mcp_exec = render(script_erb, context_for(
 ).instance_eval { context = self; binding })
 File.write(File.join(OUT, 'script-mcp.sh'), mcp_exec)   # run.sh bash-parses this too
 
-check('execute mode: wrapper exports the mode, a tool list ending in run_r, and btw\'s gate') do
+check('execute mode: wrapper exports the mode, the execute tools (run_r + pkg), and btw\'s gate') do
   mcp_exec.include?('export RSTUDIO_MCP_ACCESS="execute"') &&
-    mcp_exec.match?(/export RSTUDIO_MCP_TOOLS="[A-Za-z0-9_,]*,run_r"/) &&
+    mcp_exec.match?(/export RSTUDIO_MCP_TOOLS="[A-Za-z0-9_,]*,run_r,pkg"/) &&
     mcp_exec.include?('export BTW_RUN_R_ENABLED="true"')
 end
 check('the site profile registers the session via the rstudio.sessionInit hook (fires after renv)') do
@@ -341,9 +341,10 @@ mcp_read = render(script_erb, context_for(
   rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
   session_name: 'default', new_session_name: '', agent_access: 'read'
 ).instance_eval { context = self; binding })
-check('read mode: no run_r in the tool list and no execute gate (read-only means read-only)') do
+check('read mode: no run_r or pkg in the tool list and no execute gate (read-only means read-only)') do
   mcp_read.include?('export RSTUDIO_MCP_ACCESS="read"') &&
     !mcp_read.match?(/export RSTUDIO_MCP_TOOLS="[^"]*run_r/) &&
+    !mcp_read.match?(/export RSTUDIO_MCP_TOOLS="[^"]*,pkg/) &&
     !mcp_read.include?('export BTW_RUN_R_ENABLED')
 end
 
