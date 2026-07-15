@@ -184,6 +184,23 @@ chunk, or iterate on a package, without re-rendering to find each bug. It
 deliberately does **not** serve files/git/web tools: your agent already has
 better ones, and two ways to do everything makes it pick the worse one.
 
+**While the session is busy.** You and the agent share one single-threaded R
+process, so nothing ever runs concurrently — tool calls execute only when the
+console is idle, and requests serialize. In practice:
+
+- *Your code is running* → the agent's tool calls (reads included) **queue
+  behind it**; they never interrupt your computation. If the console doesn't
+  free up within 120 s the agent gets a clean timeout error instead — so
+  during an hours-long fit, the live session is effectively off-limits to the
+  agent. Raise `MCPTOOLS_SESSION_RESPONSE_TIMEOUT_SECONDS` if it should wait
+  longer.
+- *The agent's code is running* → your console input waits its turn; the
+  session feels briefly unresponsive, nothing is lost. The agent's code
+  doesn't echo in your console, but its **side effects are shared**: objects
+  it creates, plots on your graphics device, options, loaded packages —
+  that's what the per-call approval in execute mode is for. **Esc interrupts**
+  whatever R is evaluating, an agent's call included.
+
 Why this survives you closing the laptop: the agent, its MCP server and the R
 session all run **on the compute node** over node-local sockets — your browser
 is only a viewer. Close the tab or sleep the machine and the work continues; on
