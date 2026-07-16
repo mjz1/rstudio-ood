@@ -247,12 +247,17 @@ served by a second, separate server (`r-session-status` in the same
 own process, so it keeps answering even while the session is wedged. It
 crosses the session's CPU, its **children's** CPU (a `system()` call running
 an aligner looks idle from the session itself), whether a `run_r` call is
-still unanswered, and the kernel's wait state, and reports **idle / busy /
-busy-subprocess / waiting / dead** with the evidence. "Waiting" is
-deliberately not "wedged": from the outside, a blocked network read, a DBI
-query and a blocked prompt look identical, so the advice hands the judgement
-to the agent — it knows what code it submitted; I/O-ish code means wait,
-pure computation or possibly-prompting code means get the user to press Esc.
+still unanswered, and — via `/proc/<pid>/syscall` — what the session is
+blocked in, reporting **idle / busy / busy-subprocess / waiting-timer /
+waiting-io / waiting / dead** with the evidence. The distinction that matters:
+a `Sys.sleep` or a `poll`/`select` with a timeout is a **timed** wait that
+clears itself (`waiting-timer`, no action needed), and disk I/O is a transfer
+(`waiting-io`) — both are told apart from a **blocking read**, which is the
+only genuinely ambiguous case (a network read that will clear, or an input
+prompt nobody can answer). Only that last one is bare `waiting`, and there the
+advice hands the judgement to the agent — it knows what code it submitted;
+I/O-ish code means wait, pure computation or possibly-prompting code means get
+the user to press Esc.
 This is what an agent should call after a timeout instead of retrying. Two
 notes: the status server errors at startup when the agent runs *outside* any
 session (nothing to observe — expected, not a breakage), and the real fix

@@ -258,6 +258,46 @@ guard_btw_tools <- function(tools) {
   NULL
 }
 
+# What syscall is the process blocked in, and is it a TIMED wait? Read from
+# /proc/<pid>/syscall ("NR a0 a1 a2 a3 a4 a5 sp pc"), which is a reliable
+# number here (wchan symbolises only some waits -- it is "hrtimer_nanosleep"
+# for coreutils sleep but "0" for R's Sys.sleep, which is pselect6). Returns
+# name + `timed`: TRUE for a wait that returns on its own (a sleep, or a
+# select/poll with a finite timeout -- this is what R's Sys.sleep and polling
+# loops look like), FALSE for a blocking read (console input, or a network
+# read that clears when data arrives), NA when unreadable.
+#
+# x86_64 syscall numbers. The arg holding the timeout differs per call, and a
+# NULL pointer / -1 there means "wait forever" -- so pselect6 with a non-NULL
+# timeout is Sys.sleep, pselect6 with NULL is an indefinite wait (a possible
+# wedge). This is what separates "be patient" from "get a human".
+.mcp_proc_syscall <- function(pid) {
+  path <- sprintf("/proc/%d/syscall", as.integer(pid))
+  line <- tryCatch(suppressWarnings(readLines(path, warn = FALSE)[[1]]),
+                   error = function(e) NULL)
+  if (is.null(line) || identical(line, "running") || !nzchar(line))
+    return(list(name = NA_character_, timed = NA))
+  f <- strsplit(trimws(line), " +")[[1]]
+  nr <- suppressWarnings(as.integer(f[[1]]))
+  if (is.na(nr)) return(list(name = NA_character_, timed = NA))
+  arg <- function(i) if (length(f) >= i + 2L) f[[i + 2L]] else "0x0"  # a<i>, 0-based
+  nonnull <- function(x) !is.null(x) && !x %in% c("0x0", "0xffffffffffffffff")
+  names <- c("0"="read","17"="pread64","19"="readv","45"="recvfrom",
+             "47"="recvmsg","299"="recvmmsg","35"="nanosleep",
+             "230"="clock_nanosleep","23"="select","270"="pselect6",
+             "7"="poll","271"="ppoll","232"="epoll_wait","281"="epoll_pwait")
+  name <- unname(names[as.character(nr)])   # single-bracket: NA when unmapped
+  if (is.na(name)) name <- paste0("syscall_", nr)
+  timed <- switch(name,
+    nanosleep = , clock_nanosleep = TRUE,
+    select = , pselect6 = nonnull(arg(4)),   # timeout = 5th arg (a4)
+    ppoll = nonnull(arg(2)),                  # timeout ptr = a2
+    poll = , epoll_wait = , epoll_pwait = nonnull(arg(if (name == "poll") 2 else 3)),
+    read = , pread64 = , readv = , recvfrom = , recvmsg = , recvmmsg = FALSE,
+    NA)
+  list(name = name, timed = timed)
+}
+
 # One /proc pass: pid -> (ppid, cpu ticks). Two of these bracket the sample
 # window so descendant CPU can be measured alongside the session's own.
 .mcp_proc_snapshot <- function() {
@@ -308,19 +348,22 @@ guard_btw_tools <- function(tools) {
 # Pure verdict logic, separated for testability. cpu / subtree_cpu are cores
 # used over the sample window (session itself / its descendants minus our own
 # chain); inflight_age is seconds since the sentinel was written (NA if none);
-# state is the /proc state letter; wchan the kernel wait channel ("" if
-# unreadable). The busy threshold is deliberately far above the measured wedge
-# signature (~0.03 cores) and far below real compute (~1 core).
+# state is the /proc state letter; syscall is .mcp_proc_syscall()'s
+# list(name, timed). The busy threshold is deliberately far above the measured
+# wedge signature (~0.03 cores) and far below real compute (~1 core).
 #
 # The crucial honesty: flat CPU + an unanswered call does NOT prove a wedge.
-# system()/download.file()/DBI/Sys.sleep all look exactly like one from here
-# (the first review of this tool shipped "likely-wedged: press Esc" for that
-# state -- advice that aborts a healthy pipeline). The evidence that separates
-# them lives in two places: /proc hints when we have them (state D = disk I/O,
-# nanosleep = Sys.sleep, a computing child = subprocess), and otherwise the
-# AGENT's own knowledge of the code it submitted -- so the "waiting" advice
-# hands the judgement to the agent instead of prescribing Esc.
-.mcp_status_verdict <- function(cpu, inflight_age, state = "S", wchan = "",
+# system()/download.file()/DBI/Sys.sleep all look similar from here (the first
+# review shipped "likely-wedged: press Esc" for that state -- advice that
+# aborts a healthy pipeline; the second live test found Sys.sleep landing in
+# the generic branch because it is pselect6, not nanosleep, and wchan reads 0).
+# The signals that DO separate the cases: state D = disk I/O; a computing child
+# = subprocess; a TIMED syscall (sleep, or select/poll with a finite timeout) =
+# a self-clearing wait, which is what Sys.sleep and polling loops actually look
+# like; a blocking READ = console input OR a network read, still ambiguous ->
+# hand that last one to the AGENT, which knows the code it submitted.
+.mcp_status_verdict <- function(cpu, inflight_age, state = "S",
+                                syscall = list(name = NA, timed = NA),
                                 subtree_cpu = 0) {
   if (cpu >= 0.15) {
     return(list(verdict = "busy",
@@ -337,24 +380,36 @@ guard_btw_tools <- function(tools) {
                                "wait and re-check; do not interrupt.")))
   }
   if (!is.na(inflight_age)) {
-    hint <-
-      if (identical(state, "D")) {
-        paste("state D: the session is in uninterruptible disk I/O --",
-              "almost certainly a large read/write, NOT a wedge.")
-      } else if (grepl("nanosleep", wchan, fixed = TRUE)) {
-        paste("wait channel", wchan, ": the session is in a timed sleep",
-              "(Sys.sleep or a polling loop), NOT blocked on input.")
-      } else {
-        paste("it is blocked on SOMETHING it is waiting to read: a network",
-              "or database response -- or an input prompt nobody can answer",
-              "(the deadlock signature).")
-      }
+    # A timed wait clears itself; disk I/O is a transfer, not a wedge. Both
+    # get a WAIT verdict with no Esc. Only the genuinely ambiguous "blocked
+    # reading input" case defers to the agent and mentions Esc.
+    if (isTRUE(identical(state, "D"))) {
+      return(list(verdict = "waiting-io",
+                  advice = paste0(
+                    "A run_r call started ", round(inflight_age), "s ago and ",
+                    "the session is in state D (uninterruptible disk I/O) -- ",
+                    "a large read/write, NOT a wedge. Wait and re-check; do ",
+                    "not interrupt.")))
+    }
+    if (isTRUE(syscall$timed)) {
+      return(list(verdict = "waiting-timer",
+                  advice = paste0(
+                    "A run_r call started ", round(inflight_age), "s ago and ",
+                    "the session is in a timed wait (", syscall$name,
+                    " with a timeout -- Sys.sleep, or a poll/select loop), ",
+                    "which returns on its own. This is NOT a wedge and needs ",
+                    "no user action: just wait and call this tool again ",
+                    "later to confirm it finished.")))
+    }
+    reading <- isFALSE(syscall$timed) && !is.na(syscall$name)
     return(list(verdict = "waiting",
                 advice = paste0(
                   "A run_r call started ", round(inflight_age), "s ago, has ",
-                  "not returned, and the session is not computing; ", hint,
-                  " YOU know the code you submitted: if it plausibly does ",
-                  "I/O, network/database work, subprocesses, or sleeps, this ",
+                  "not returned, and the session is not computing",
+                  if (reading) paste0(" -- it is blocked in ", syscall$name,
+                                      "(), reading something") else "",
+                  ". YOU know the code you submitted: if it plausibly does ",
+                  "I/O, a network/database read, subprocesses, or sleeps, this ",
                   "is expected -- wait and call this tool again later. If it ",
                   "was pure computation, or could have prompted for input ",
                   "(interactive calls can slip in via source()/do.call()), ",
@@ -420,9 +475,7 @@ rstudio_session_status <- function(sample_seconds = 1) {
                      "relaunch it."))
       }
       cpu <- (s2$utime - s1$utime + s2$stime - s1$stime) / 100 / sample_seconds
-      wchan <- tryCatch(readLines(sprintf("/proc/%d/wchan", pid),
-                                  warn = FALSE)[[1]],
-                        error = function(e) "")
+      syscall <- .mcp_proc_syscall(pid)
 
       # our own ancestry chain (this server up to rsession): descendants of
       # the session, but not the session's WORK -- excluded from subtree CPU
@@ -451,7 +504,7 @@ rstudio_session_status <- function(sample_seconds = 1) {
         }
       }
 
-      v <- .mcp_status_verdict(cpu, inflight_age, s2$state, wchan, subtree_cpu)
+      v <- .mcp_status_verdict(cpu, inflight_age, s2$state, syscall, subtree_cpu)
       paste0(
         v$verdict, ": ", v$advice,
         "\n[evidence: rsession pid ", pid, " (via ", loc$source, ")",
@@ -459,8 +512,10 @@ rstudio_session_status <- function(sample_seconds = 1) {
         ", cpu ", sprintf("%.3f", cpu),
         " + children ", sprintf("%.3f", subtree_cpu),
         " cores over ", sample_seconds, "s",
-        if (nzchar(wchan) && !identical(wchan, "0"))
-          paste0(", wchan ", wchan),
+        if (!is.na(syscall$name))
+          paste0(", syscall ", syscall$name,
+                 if (!is.na(syscall$timed))
+                   paste0(" (", if (syscall$timed) "timed" else "blocking", ")")),
         if (!is.na(inflight_age))
           paste0(", unanswered run_r call ", round(inflight_age), "s old"),
         "]"
@@ -469,9 +524,11 @@ rstudio_session_status <- function(sample_seconds = 1) {
     name = "rstudio_session_status",
     description = paste(
       "Report what the live R session is doing: idle, busy (computing),",
-      "busy-subprocess (a child process like system() is computing),",
-      "waiting (an unanswered call, not computing -- evidence and advice",
-      "included), or dead -- WITHOUT touching the session itself (reads",
+      "busy-subprocess (a child like system() is computing), waiting-timer",
+      "(a self-clearing Sys.sleep/poll -- no action needed), waiting-io (a",
+      "disk transfer), waiting (an unanswered call blocked on input, which",
+      "may be a wedge -- evidence and advice included), or dead -- WITHOUT",
+      "touching the session itself (reads",
       "/proc from a separate process, so it works even when the session is",
       "unresponsive). Call this after a run_r timeout instead of probing",
       "with more run_r calls: a timeout alone cannot distinguish a long",

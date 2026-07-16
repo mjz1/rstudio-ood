@@ -458,7 +458,9 @@ check('mcp-guard.R ships in template/ and defines guard_btw_tools + session_stat
     File.read(guard_src).include?('S7::S7_data') &&
     File.read(guard_src).include?('rstudio_session_status <- function') &&
     File.read(guard_src).include?('.run_r-inflight') &&  # sentinel both sides read
-    File.read(guard_src).include?('busy-subprocess')     # the system()-call verdict
+    File.read(guard_src).include?('busy-subprocess') &&  # the system()-call verdict
+    File.read(guard_src).include?('waiting-timer') &&    # Sys.sleep vs wedge, via
+    File.read(guard_src).include?('/syscall')            # /proc/<pid>/syscall
 end
 check('the wrapper exports the rsession pid for session_status (deferred, not the writer\'s pid)') do
   # The rendered BATCH script must carry the ESCAPED \$\$: the heredoc

@@ -51,14 +51,17 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   never connects to the session: it observes the rsession process via
   `/proc` from its own process — the session's CPU, its children's CPU
   (`system()` running an external tool looks idle from the session itself),
-  whether a `run_r` call is still unanswered, and the kernel wait state —
-  and reports idle / busy / busy-subprocess / waiting / dead with the
-  evidence. Agents call it after a timeout instead of probing the session:
-  a timeout alone cannot distinguish a long computation (self-recovers)
-  from a wedge (needs a human at the console, and probes corrupt the
-  recovery), and "waiting" deliberately hands that judgement to the agent,
-  which knows whether the code it submitted does I/O or could have
-  prompted. (#2)
+  whether a `run_r` call is still unanswered, and — via
+  `/proc/<pid>/syscall` — what the session is blocked in, and reports idle /
+  busy / busy-subprocess / waiting-timer / waiting-io / waiting / dead with
+  the evidence. A `Sys.sleep` or a timed `poll`/`select` (`waiting-timer`)
+  and disk I/O (`waiting-io`) are self-clearing and told apart from a
+  blocking read, the one genuinely ambiguous case (a network read that
+  clears, or an input prompt nobody can answer) — only that is bare
+  `waiting`, and there the advice hands the judgement to the agent, which
+  knows whether the code it submitted does I/O or could have prompted.
+  Agents call it after a timeout instead of probing the session, which
+  corrupts recovery. (#2)
 
 - **Read-only sessions are read-only twice over.** btw's `BTW_RUN_R_ENABLED`
   only gates its *default* tool set — a tool list that explicitly names
