@@ -245,12 +245,19 @@ There is one probe that *is* free: the **`rstudio_session_status`** tool,
 served by a second, separate server (`r-session-status` in the same
 `.mcp.json`) that never connects to the session — it reads `/proc` from its
 own process, so it keeps answering even while the session is wedged. It
-crosses the session's CPU use with whether a `run_r` call is still unanswered
-and reports **idle / busy / likely-wedged / dead**, with the evidence and what
-to do. This is what an agent should call after a timeout instead of retrying:
-a timeout alone cannot distinguish a long computation (wait — it recovers by
-itself) from a wedge (get a human). The real fix (per-call timeout and
-cancellation) still belongs upstream in `mcptools`/`btw`.
+crosses the session's CPU, its **children's** CPU (a `system()` call running
+an aligner looks idle from the session itself), whether a `run_r` call is
+still unanswered, and the kernel's wait state, and reports **idle / busy /
+busy-subprocess / waiting / dead** with the evidence. "Waiting" is
+deliberately not "wedged": from the outside, a blocked network read, a DBI
+query and a blocked prompt look identical, so the advice hands the judgement
+to the agent — it knows what code it submitted; I/O-ish code means wait,
+pure computation or possibly-prompting code means get the user to press Esc.
+This is what an agent should call after a timeout instead of retrying. Two
+notes: the status server errors at startup when the agent runs *outside* any
+session (nothing to observe — expected, not a breakage), and the real fix
+(per-call timeout and cancellation) still belongs upstream in
+`mcptools`/`btw`.
 
 Why this survives you closing the laptop: the agent, its MCP server and the R
 session all run **on the compute node** over node-local sockets — your browser

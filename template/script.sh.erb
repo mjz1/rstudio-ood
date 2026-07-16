@@ -274,6 +274,14 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # tool list.
   export RSTUDIO_MCP_ACCESS="<%= agent_access %>"
   export RSTUDIO_MCP_TOOLS="<%= mcp_tools %>"
+  # This wrapper execs rsession, so \$\$ IS the rsession pid, and every child
+  # (Terminal shell, agent, MCP servers) inherits it. The session_status tool
+  # prefers this over walking /proc ancestry: the walk assumes the Terminal
+  # descends from a process named exactly "rsession", which client spawning
+  # strategies (double-fork, reparenting) can silently break -- and a pid the
+  # status server can check directly also makes "the session died" detectable
+  # after reparenting, where the walk could only say "unknown".
+  export RSTUDIO_SESSION_PID="\$\$"
   # mcp-guard.R: the run_r AST gate AND the session_status tool, sourced by
   # both .mcp.json server commands. Exported in read mode too -- read sessions
   # serve no run_r (nothing gets wrapped), but the status server still needs

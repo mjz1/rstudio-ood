@@ -454,7 +454,18 @@ check('mcp-guard.R ships in template/ and defines guard_btw_tools + session_stat
     File.read(guard_src).include?('guard_btw_tools <- function') &&
     File.read(guard_src).include?('S7::S7_data') &&
     File.read(guard_src).include?('rstudio_session_status <- function') &&
-    File.read(guard_src).include?('.run_r-inflight')   # sentinel both sides read
+    File.read(guard_src).include?('.run_r-inflight') &&  # sentinel both sides read
+    File.read(guard_src).include?('busy-subprocess')     # the system()-call verdict
+end
+check('the wrapper exports the rsession pid for session_status (deferred, not the writer\'s pid)') do
+  # The rendered BATCH script must carry the ESCAPED \$\$: the heredoc
+  # unescapes it when the batch script writes the wrapper, and the wrapper
+  # execs rsession, so at wrapper RUN time $$ is the rsession pid. An
+  # unescaped $$ here would expand at heredoc-WRITE time to the batch
+  # script's pid -- always wrong, and a bash parse would never notice.
+  mcp_exec.include?('export RSTUDIO_SESSION_PID="\$\$"') &&
+    mcp_read.include?('export RSTUDIO_SESSION_PID="\$\$"') &&
+    !sh.include?('RSTUDIO_SESSION_PID')
 end
 check('the guard knows the measured hazards, including the base-R modal') do
   g = File.read(guard_src)

@@ -228,7 +228,8 @@ guard_btw_tools <- function(tools) {
 # fields resume after the LAST close-paren.
 .mcp_proc_stat <- function(pid) {
   path <- sprintf("/proc/%d/stat", as.integer(pid))
-  line <- tryCatch(readLines(path, warn = FALSE)[[1]], error = function(e) NULL)
+  line <- tryCatch(suppressWarnings(readLines(path, warn = FALSE)[[1]]),
+                   error = function(e) NULL)
   if (is.null(line)) return(NULL)
   cp <- max(gregexpr(")", line, fixed = TRUE)[[1]])
   rest <- strsplit(trimws(substring(line, cp + 1L)), " +")[[1]]
@@ -257,48 +258,183 @@ guard_btw_tools <- function(tools) {
   NULL
 }
 
-# Pure verdict logic, separated for testability. cpu is cores used over the
-# sample window; inflight_age is seconds since the sentinel was written (NA if
-# none). The busy threshold is deliberately far above the measured wedge
-# signature (~0.03 cores) and far below real compute (~1 core).
-.mcp_status_verdict <- function(cpu, inflight_age) {
-  if (cpu >= 0.15) {
-    list(verdict = "busy",
-         advice = paste("The session is computing. Wait for the result;",
-                        "do not submit further calls -- they queue."))
-  } else if (!is.na(inflight_age)) {
-    list(verdict = "likely-wedged",
-         advice = paste("A run_r call started", round(inflight_age), "s ago,",
-                        "never returned, and the session is not computing --",
-                        "the signature of code blocked waiting for input.",
-                        "Do NOT submit further tool calls (probes corrupt",
-                        "recovery). Ask the user to press Esc in the R",
-                        "console (Q at a Browse[N]> prompt; click any dialog)."))
-  } else {
-    list(verdict = "idle",
-         advice = "The session is idle and responsive.")
+# One /proc pass: pid -> (ppid, cpu ticks). Two of these bracket the sample
+# window so descendant CPU can be measured alongside the session's own.
+.mcp_proc_snapshot <- function() {
+  pids <- list.files("/proc", pattern = "^[0-9]+$")
+  out <- new.env(parent = emptyenv())
+  for (p in pids) {
+    st <- .mcp_proc_stat(p)
+    if (!is.null(st)) assign(p, c(st$ppid, st$utime + st$stime), envir = out)
   }
+  out
+}
+
+# Cores burned over the window by DESCENDANTS of root, excluding the pids on
+# `exclude` (our own ancestry chain: the Terminal shell, the agent, this very
+# server -- all descendants of rsession that are not the session's work). A
+# session inside system()/system2() has ~0 CPU itself while its CHILD does the
+# work -- samtools, an aligner, a compiler -- and without this signal that
+# reads as "not computing", one flat sample away from telling the user to Esc
+# a healthy pipeline.
+.mcp_subtree_cpu <- function(root, exclude, snap1, snap2, secs) {
+  kids_of <- function(snap) {
+    m <- new.env(parent = emptyenv())
+    for (p in ls(snap)) {
+      pp <- as.character(get(p, envir = snap)[[1]])
+      assign(pp, c(if (exists(pp, envir = m)) get(pp, envir = m), p), envir = m)
+    }
+    m
+  }
+  m2 <- kids_of(snap2)
+  seen <- character(); queue <- as.character(root)
+  while (length(queue)) {
+    p <- queue[[1]]; queue <- queue[-1]
+    for (k in if (exists(p, envir = m2)) get(p, envir = m2) else character()) {
+      if (k %in% seen || k %in% as.character(exclude)) next
+      seen <- c(seen, k); queue <- c(queue, k)
+    }
+  }
+  ticks <- 0
+  for (p in seen) {
+    if (exists(p, envir = snap1) && exists(p, envir = snap2)) {
+      d <- get(p, envir = snap2)[[2]] - get(p, envir = snap1)[[2]]
+      if (is.finite(d) && d > 0) ticks <- ticks + d
+    }
+  }
+  ticks / 100 / secs
+}
+
+# Pure verdict logic, separated for testability. cpu / subtree_cpu are cores
+# used over the sample window (session itself / its descendants minus our own
+# chain); inflight_age is seconds since the sentinel was written (NA if none);
+# state is the /proc state letter; wchan the kernel wait channel ("" if
+# unreadable). The busy threshold is deliberately far above the measured wedge
+# signature (~0.03 cores) and far below real compute (~1 core).
+#
+# The crucial honesty: flat CPU + an unanswered call does NOT prove a wedge.
+# system()/download.file()/DBI/Sys.sleep all look exactly like one from here
+# (the first review of this tool shipped "likely-wedged: press Esc" for that
+# state -- advice that aborts a healthy pipeline). The evidence that separates
+# them lives in two places: /proc hints when we have them (state D = disk I/O,
+# nanosleep = Sys.sleep, a computing child = subprocess), and otherwise the
+# AGENT's own knowledge of the code it submitted -- so the "waiting" advice
+# hands the judgement to the agent instead of prescribing Esc.
+.mcp_status_verdict <- function(cpu, inflight_age, state = "S", wchan = "",
+                                subtree_cpu = 0) {
+  if (cpu >= 0.15) {
+    return(list(verdict = "busy",
+                advice = paste("The session is computing. Wait for the",
+                               "result; do not submit further calls --",
+                               "they queue.")))
+  }
+  if (!is.na(inflight_age) && subtree_cpu >= 0.15) {
+    return(list(verdict = "busy-subprocess",
+                advice = paste("The session itself is quiet but a child",
+                               "process of it is computing -- the submitted",
+                               "code is running an external tool (system(),",
+                               "a compiler, an aligner). Legitimate work:",
+                               "wait and re-check; do not interrupt.")))
+  }
+  if (!is.na(inflight_age)) {
+    hint <-
+      if (identical(state, "D")) {
+        paste("state D: the session is in uninterruptible disk I/O --",
+              "almost certainly a large read/write, NOT a wedge.")
+      } else if (grepl("nanosleep", wchan, fixed = TRUE)) {
+        paste("wait channel", wchan, ": the session is in a timed sleep",
+              "(Sys.sleep or a polling loop), NOT blocked on input.")
+      } else {
+        paste("it is blocked on SOMETHING it is waiting to read: a network",
+              "or database response -- or an input prompt nobody can answer",
+              "(the deadlock signature).")
+      }
+    return(list(verdict = "waiting",
+                advice = paste0(
+                  "A run_r call started ", round(inflight_age), "s ago, has ",
+                  "not returned, and the session is not computing; ", hint,
+                  " YOU know the code you submitted: if it plausibly does ",
+                  "I/O, network/database work, subprocesses, or sleeps, this ",
+                  "is expected -- wait and call this tool again later. If it ",
+                  "was pure computation, or could have prompted for input ",
+                  "(interactive calls can slip in via source()/do.call()), ",
+                  "treat it as wedged: do NOT probe with more tool calls, ",
+                  "and ask the user to press Esc in the R console (Q at a ",
+                  "Browse[N]> prompt; click any dialog).")))
+  }
+  list(verdict = "idle",
+       advice = "The session is idle and responsive.")
+}
+
+# Locate the rsession pid. RSTUDIO_SESSION_PID (exported by the rsession
+# wrapper, so it IS the session's pid and every Terminal child inherits it) is
+# preferred: the ancestry walk assumes the chain shell<-agent<-server stays
+# unbroken and the process is named exactly "rsession", both of which client
+# spawning strategies can silently violate. The env var also makes "dead"
+# detectable -- a pid we can still name after the process is gone -- where the
+# walk could only shrug "unknown". Validated before trust (pid recycling,
+# stale env after a session restart); the walk remains as fallback for
+# sessions launched before the export existed.
+.mcp_rsession_pid <- function() {
+  env <- suppressWarnings(as.integer(Sys.getenv("RSTUDIO_SESSION_PID")))
+  if (!is.na(env) && env > 1) {
+    st <- .mcp_proc_stat(env)
+    if (!is.null(st) && identical(st$comm, "rsession")) {
+      return(list(pid = env, source = "env"))
+    }
+    walked <- .mcp_find_ancestor("rsession")
+    if (!is.null(walked)) return(list(pid = walked, source = "walk"))
+    # The wrapper named a pid and it is gone (or recycled into something
+    # else), and no rsession ancestor exists either: the session died.
+    return(list(pid = env, source = "env-dead"))
+  }
+  walked <- .mcp_find_ancestor("rsession")
+  if (!is.null(walked)) return(list(pid = walked, source = "walk"))
+  NULL
 }
 
 # The ellmer tool served by the r-session-status entry.
 rstudio_session_status <- function(sample_seconds = 1) {
   ellmer::tool(
     function() {
-      pid <- .mcp_find_ancestor("rsession")
-      if (is.null(pid)) {
-        return(paste("unknown: no rsession ancestor -- this server does not",
-                     "appear to be running inside an RStudio session's",
-                     "Terminal, so there is no session to observe."))
+      loc <- .mcp_rsession_pid()
+      if (is.null(loc)) {
+        return(paste("unknown: no rsession found by pid or ancestry -- this",
+                     "server does not appear to be running inside an RStudio",
+                     "session's Terminal, so there is no session to observe."))
       }
+      if (identical(loc$source, "env-dead")) {
+        return(paste("dead: the rsession process (pid", loc$pid, ") no longer",
+                     "exists -- the session or its job has ended. The user",
+                     "must relaunch it."))
+      }
+      pid <- loc$pid
       s1 <- .mcp_proc_stat(pid)
+      snap1 <- .mcp_proc_snapshot()
       Sys.sleep(sample_seconds)
       s2 <- .mcp_proc_stat(pid)
+      snap2 <- .mcp_proc_snapshot()
       if (is.null(s1) || is.null(s2)) {
         return(paste("dead: the rsession process (pid", pid, ") disappeared --",
                      "the session or its job has ended. The user must",
                      "relaunch it."))
       }
       cpu <- (s2$utime - s1$utime + s2$stime - s1$stime) / 100 / sample_seconds
+      wchan <- tryCatch(readLines(sprintf("/proc/%d/wchan", pid),
+                                  warn = FALSE)[[1]],
+                        error = function(e) "")
+
+      # our own ancestry chain (this server up to rsession): descendants of
+      # the session, but not the session's WORK -- excluded from subtree CPU
+      chain <- integer(); p <- Sys.getpid()
+      for (i in 1:40) {
+        chain <- c(chain, p)
+        st <- .mcp_proc_stat(p)
+        if (is.null(st) || is.na(st$ppid) || st$ppid <= 1L ||
+            st$ppid == pid) break
+        p <- st$ppid
+      }
+      subtree_cpu <- .mcp_subtree_cpu(pid, chain, snap1, snap2, sample_seconds)
 
       # sentinel written by the guarded run_r; ignore one that predates the
       # rsession process itself (leftover from a crashed predecessor).
@@ -315,11 +451,16 @@ rstudio_session_status <- function(sample_seconds = 1) {
         }
       }
 
-      v <- .mcp_status_verdict(cpu, inflight_age)
+      v <- .mcp_status_verdict(cpu, inflight_age, s2$state, wchan, subtree_cpu)
       paste0(
         v$verdict, ": ", v$advice,
-        "\n[evidence: rsession pid ", pid, ", state ", s2$state,
-        ", cpu ", sprintf("%.3f", cpu), " cores over ", sample_seconds, "s",
+        "\n[evidence: rsession pid ", pid, " (via ", loc$source, ")",
+        ", state ", s2$state,
+        ", cpu ", sprintf("%.3f", cpu),
+        " + children ", sprintf("%.3f", subtree_cpu),
+        " cores over ", sample_seconds, "s",
+        if (nzchar(wchan) && !identical(wchan, "0"))
+          paste0(", wchan ", wchan),
         if (!is.na(inflight_age))
           paste0(", unanswered run_r call ", round(inflight_age), "s old"),
         "]"
@@ -327,9 +468,11 @@ rstudio_session_status <- function(sample_seconds = 1) {
     },
     name = "rstudio_session_status",
     description = paste(
-      "Report whether the live R session is idle, busy computing, likely",
-      "wedged, or dead -- WITHOUT touching the session itself (reads /proc",
-      "from a separate process, so it works even when the session is",
+      "Report what the live R session is doing: idle, busy (computing),",
+      "busy-subprocess (a child process like system() is computing),",
+      "waiting (an unanswered call, not computing -- evidence and advice",
+      "included), or dead -- WITHOUT touching the session itself (reads",
+      "/proc from a separate process, so it works even when the session is",
       "unresponsive). Call this after a run_r timeout instead of probing",
       "with more run_r calls: a timeout alone cannot distinguish a long",
       "computation (be patient, it recovers by itself) from a session",
