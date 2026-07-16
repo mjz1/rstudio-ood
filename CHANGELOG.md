@@ -54,14 +54,14 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   whether a `run_r` call is still unanswered, and — via
   `/proc/<pid>/syscall` — what the session is blocked in, and reports idle /
   busy / busy-subprocess / waiting-timer / waiting-io / waiting / dead with
-  the evidence. A `Sys.sleep` or a timed `poll`/`select` (`waiting-timer`)
-  and disk I/O (`waiting-io`) are self-clearing and told apart from a
-  blocking read, the one genuinely ambiguous case (a network read that
-  clears, or an input prompt nobody can answer) — only that is bare
-  `waiting`, and there the advice hands the judgement to the agent, which
-  knows whether the code it submitted does I/O or could have prompted.
-  Agents call it after a timeout instead of probing the session, which
-  corrupts recovery. (#2)
+  the evidence. Only a pure sleep (`nanosleep`) is confidently self-clearing
+  (`waiting-timer`, "no action"), and disk I/O is a transfer (`waiting-io`);
+  a `poll`/`select` with a timeout — which looks identical whether it is a
+  `Sys.sleep` or an event loop wedged forever — an indefinite wait, and a
+  blocking read all fall to bare `waiting`, where the advice names the
+  syscall and hands the judgement to the agent (which knows whether its code
+  does I/O or could have prompted). Agents call it after a timeout instead of
+  probing the session, which corrupts recovery. (#2)
 
 - **Read-only sessions are read-only twice over.** btw's `BTW_RUN_R_ENABLED`
   only gates its *default* tool set — a tool list that explicitly names

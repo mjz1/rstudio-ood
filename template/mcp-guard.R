@@ -259,43 +259,65 @@ guard_btw_tools <- function(tools) {
 }
 
 # What syscall is the process blocked in, and is it a TIMED wait? Read from
-# /proc/<pid>/syscall ("NR a0 a1 a2 a3 a4 a5 sp pc"), which is a reliable
-# number here (wchan symbolises only some waits -- it is "hrtimer_nanosleep"
-# for coreutils sleep but "0" for R's Sys.sleep, which is pselect6). Returns
-# name + `timed`: TRUE for a wait that returns on its own (a sleep, or a
-# select/poll with a finite timeout -- this is what R's Sys.sleep and polling
-# loops look like), FALSE for a blocking read (console input, or a network
-# read that clears when data arrives), NA when unreadable.
+# /proc/<pid>/syscall ("NR a0 a1 a2 a3 a4 a5 sp pc"), a reliable number here
+# (wchan symbolises only some waits -- "hrtimer_nanosleep" for coreutils sleep
+# but "0" for R's Sys.sleep, which is pselect6). Returns name + a `class`:
 #
-# x86_64 syscall numbers. The arg holding the timeout differs per call, and a
-# NULL pointer / -1 there means "wait forever" -- so pselect6 with a non-NULL
-# timeout is Sys.sleep, pselect6 with NULL is an indefinite wait (a possible
-# wedge). This is what separates "be patient" from "get a human".
+#   "sleep"           nanosleep/clock_nanosleep -- a pure timer, unambiguously
+#                     self-clearing. The ONLY class safe to call "no action".
+#   "timed-wait"      select/poll/epoll with a FINITE timeout. Ambiguous: this
+#                     is what Sys.sleep looks like, but ALSO an event loop that
+#                     polls-and-reloops waiting for input that may never come.
+#                     Defers to the agent -- never "no action".
+#   "indefinite-wait" select/poll/epoll with NO timeout (NULL ptr, or -1).
+#                     Waiting for an event that may never arrive -- suspicious.
+#   "read"            a blocking read/recv -- console input, or a network read
+#                     that clears when data arrives.
+#   "unknown"         unmapped/unreadable/not-in-a-syscall.
+#
+# Only "sleep" earns a confident self-clearing verdict. A finite-timeout
+# poll/epoll is NOT proof of a self-clearing wait: an infinite poll renders its
+# int timeout as the 32-bit -1 "0xffffffff" (NOT the 64-bit pointer NULL), and
+# even a finite-timeout poll can be an event loop wedged forever -- both once
+# mis-labelled "just wait" (found by review). So the pointer-timeout calls
+# (select/pselect6/ppoll) and the int-timeout calls (poll/epoll) use DIFFERENT
+# predicates, and everything but "sleep" defers to the agent's own knowledge of
+# the code it ran.
 .mcp_proc_syscall <- function(pid) {
   path <- sprintf("/proc/%d/syscall", as.integer(pid))
   line <- tryCatch(suppressWarnings(readLines(path, warn = FALSE)[[1]]),
                    error = function(e) NULL)
   if (is.null(line) || identical(line, "running") || !nzchar(line))
-    return(list(name = NA_character_, timed = NA))
+    return(list(name = NA_character_, class = "unknown"))
   f <- strsplit(trimws(line), " +")[[1]]
   nr <- suppressWarnings(as.integer(f[[1]]))
-  if (is.na(nr)) return(list(name = NA_character_, timed = NA))
+  if (is.na(nr) || nr < 0) return(list(name = NA_character_, class = "unknown"))
   arg <- function(i) if (length(f) >= i + 2L) f[[i + 2L]] else "0x0"  # a<i>, 0-based
-  nonnull <- function(x) !is.null(x) && !x %in% c("0x0", "0xffffffffffffffff")
+  # pointer timeout: NULL (0x0) means wait forever
+  ptr_finite <- function(x) !x %in% c("0x0", "0xffffffffffffffff")
+  # int timeout passed by value: -1 means wait forever, rendered as 32-bit
+  # (0xffffffff) OR 64-bit all-ones; any non-negative value is a real timeout
+  int_finite <- function(x) {
+    if (x %in% c("0xffffffff", "0xffffffffffffffff")) return(FALSE)
+    v <- suppressWarnings(strtoi(sub("^0x", "", x), 16L))
+    is.na(v) || v >= 0   # NA = huge finite value (overflow) -> still finite
+  }
   names <- c("0"="read","17"="pread64","19"="readv","45"="recvfrom",
              "47"="recvmsg","299"="recvmmsg","35"="nanosleep",
              "230"="clock_nanosleep","23"="select","270"="pselect6",
              "7"="poll","271"="ppoll","232"="epoll_wait","281"="epoll_pwait")
   name <- unname(names[as.character(nr)])   # single-bracket: NA when unmapped
   if (is.na(name)) name <- paste0("syscall_", nr)
-  timed <- switch(name,
-    nanosleep = , clock_nanosleep = TRUE,
-    select = , pselect6 = nonnull(arg(4)),   # timeout = 5th arg (a4)
-    ppoll = nonnull(arg(2)),                  # timeout ptr = a2
-    poll = , epoll_wait = , epoll_pwait = nonnull(arg(if (name == "poll") 2 else 3)),
-    read = , pread64 = , readv = , recvfrom = , recvmsg = , recvmmsg = FALSE,
-    NA)
-  list(name = name, timed = timed)
+  timed_wait <- function(finite) if (finite) "timed-wait" else "indefinite-wait"
+  class <- switch(name,
+    nanosleep = , clock_nanosleep = "sleep",
+    select = , pselect6 = timed_wait(ptr_finite(arg(4))),  # timeout ptr = a4
+    ppoll = timed_wait(ptr_finite(arg(2))),                 # timeout ptr = a2
+    poll = timed_wait(int_finite(arg(2))),                  # timeout int = a2
+    epoll_wait = , epoll_pwait = timed_wait(int_finite(arg(3))),  # int = a3
+    read = , pread64 = , readv = , recvfrom = , recvmsg = , recvmmsg = "read",
+    "unknown")
+  list(name = name, class = class)
 }
 
 # One /proc pass: pid -> (ppid, cpu ticks). Two of these bracket the sample
@@ -349,21 +371,20 @@ guard_btw_tools <- function(tools) {
 # used over the sample window (session itself / its descendants minus our own
 # chain); inflight_age is seconds since the sentinel was written (NA if none);
 # state is the /proc state letter; syscall is .mcp_proc_syscall()'s
-# list(name, timed). The busy threshold is deliberately far above the measured
+# list(name, class). The busy threshold is deliberately far above the measured
 # wedge signature (~0.03 cores) and far below real compute (~1 core).
 #
-# The crucial honesty: flat CPU + an unanswered call does NOT prove a wedge.
-# system()/download.file()/DBI/Sys.sleep all look similar from here (the first
-# review shipped "likely-wedged: press Esc" for that state -- advice that
-# aborts a healthy pipeline; the second live test found Sys.sleep landing in
-# the generic branch because it is pselect6, not nanosleep, and wchan reads 0).
-# The signals that DO separate the cases: state D = disk I/O; a computing child
-# = subprocess; a TIMED syscall (sleep, or select/poll with a finite timeout) =
-# a self-clearing wait, which is what Sys.sleep and polling loops actually look
-# like; a blocking READ = console input OR a network read, still ambiguous ->
-# hand that last one to the AGENT, which knows the code it submitted.
+# The crucial honesty: flat CPU + an unanswered call does NOT prove a wedge --
+# but the converse is just as dangerous. A first version told the agent to
+# press Esc during a healthy pipeline; a second called a finite-timeout poll
+# "self-clearing, no action" when an event loop wedged forever ALSO polls with
+# a timeout (both found by review). So exactly ONE syscall class is confidently
+# self-clearing -- a pure "sleep" (nanosleep) -- and earns "no action". Every
+# other wait (a timed/indefinite poll-select, a blocking read) is genuinely
+# ambiguous from /proc and DEFERS to the agent, which knows the code it ran.
+# state D (disk I/O) and a computing child are the other confident cases.
 .mcp_status_verdict <- function(cpu, inflight_age, state = "S",
-                                syscall = list(name = NA, timed = NA),
+                                syscall = list(name = NA, class = "unknown"),
                                 subtree_cpu = 0) {
   if (cpu >= 0.15) {
     return(list(verdict = "busy",
@@ -380,9 +401,6 @@ guard_btw_tools <- function(tools) {
                                "wait and re-check; do not interrupt.")))
   }
   if (!is.na(inflight_age)) {
-    # A timed wait clears itself; disk I/O is a transfer, not a wedge. Both
-    # get a WAIT verdict with no Esc. Only the genuinely ambiguous "blocked
-    # reading input" case defers to the agent and mentions Esc.
     if (isTRUE(identical(state, "D"))) {
       return(list(verdict = "waiting-io",
                   advice = paste0(
@@ -391,27 +409,38 @@ guard_btw_tools <- function(tools) {
                     "a large read/write, NOT a wedge. Wait and re-check; do ",
                     "not interrupt.")))
     }
-    if (isTRUE(syscall$timed)) {
+    # ONLY a pure sleep is confidently self-clearing.
+    if (identical(syscall$class, "sleep")) {
       return(list(verdict = "waiting-timer",
                   advice = paste0(
                     "A run_r call started ", round(inflight_age), "s ago and ",
-                    "the session is in a timed wait (", syscall$name,
-                    " with a timeout -- Sys.sleep, or a poll/select loop), ",
-                    "which returns on its own. This is NOT a wedge and needs ",
-                    "no user action: just wait and call this tool again ",
-                    "later to confirm it finished.")))
+                    "the session is in a pure timed sleep (", syscall$name,
+                    "), which returns on its own. NOT a wedge and needs no ",
+                    "user action: wait and call this tool again later.")))
     }
-    reading <- isFALSE(syscall$timed) && !is.na(syscall$name)
+    # Everything else is ambiguous from the outside: name what it is in, then
+    # hand the judgement to the agent -- it alone knows what code it ran.
+    hint <- switch(syscall$class,
+      "timed-wait" = paste0(
+        " It is in a timed ", syscall$name, " wait -- which is BOTH what a ",
+        "Sys.sleep / timed poll looks like AND what an event loop stuck ",
+        "waiting for input looks like, so the wait alone does not tell us ",
+        "which."),
+      "indefinite-wait" = paste0(
+        " It is in an INDEFINITE ", syscall$name, " wait (no timeout) -- ",
+        "blocked until some event arrives, which may be never."),
+      "read" = paste0(
+        " It is blocked in ", syscall$name, "(), reading input -- a network ",
+        "or pipe read clears when data arrives, a console prompt never does."),
+      "")
     return(list(verdict = "waiting",
                 advice = paste0(
                   "A run_r call started ", round(inflight_age), "s ago, has ",
-                  "not returned, and the session is not computing",
-                  if (reading) paste0(" -- it is blocked in ", syscall$name,
-                                      "(), reading something") else "",
-                  ". YOU know the code you submitted: if it plausibly does ",
-                  "I/O, a network/database read, subprocesses, or sleeps, this ",
-                  "is expected -- wait and call this tool again later. If it ",
-                  "was pure computation, or could have prompted for input ",
+                  "not returned, and the session is not computing.", hint,
+                  " YOU know the code you submitted: if it plausibly does I/O, ",
+                  "a network/database read, subprocesses, or sleeps, this is ",
+                  "expected -- wait and call this tool again later. If it was ",
+                  "pure computation, or could have prompted for input ",
                   "(interactive calls can slip in via source()/do.call()), ",
                   "treat it as wedged: do NOT probe with more tool calls, ",
                   "and ask the user to press Esc in the R console (Q at a ",
@@ -513,9 +542,7 @@ rstudio_session_status <- function(sample_seconds = 1) {
         " + children ", sprintf("%.3f", subtree_cpu),
         " cores over ", sample_seconds, "s",
         if (!is.na(syscall$name))
-          paste0(", syscall ", syscall$name,
-                 if (!is.na(syscall$timed))
-                   paste0(" (", if (syscall$timed) "timed" else "blocking", ")")),
+          paste0(", syscall ", syscall$name, " [", syscall$class, "]"),
         if (!is.na(inflight_age))
           paste0(", unanswered run_r call ", round(inflight_age), "s old"),
         "]"

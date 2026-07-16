@@ -460,7 +460,9 @@ check('mcp-guard.R ships in template/ and defines guard_btw_tools + session_stat
     File.read(guard_src).include?('.run_r-inflight') &&  # sentinel both sides read
     File.read(guard_src).include?('busy-subprocess') &&  # the system()-call verdict
     File.read(guard_src).include?('waiting-timer') &&    # Sys.sleep vs wedge, via
-    File.read(guard_src).include?('/syscall')            # /proc/<pid>/syscall
+    File.read(guard_src).include?('/syscall') &&         # /proc/<pid>/syscall
+    File.read(guard_src).include?('indefinite-wait') &&  # infinite poll != self-clearing
+    File.read(guard_src).include?('0xffffffff')          # 32-bit -1 timeout guard
 end
 check('the wrapper exports the rsession pid for session_status (deferred, not the writer\'s pid)') do
   # The rendered BATCH script must carry the ESCAPED \$\$: the heredoc
