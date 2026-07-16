@@ -342,6 +342,30 @@ local({
                          FALSE
                        })
         if (ok) {
+          # Agent-submitted code runs on this session's single R thread, driven
+          # by mcptools' later/promises event loop, which only advances when the
+          # console is idle. A submitted call that PROMPTS for input -- devtools/
+          # pkgbuild's "install build tools? [Y/n]", renv's first-use consent,
+          # askYesNo(), menu() -- reads from a console nobody is typing into, so
+          # the thread blocks inside that read, the event loop never resumes, and
+          # the session DEADLOCKS: every later tool call times out with no way to
+          # recover (the 120s timeout is server-side and cannot unblock the
+          # session; even SIGINT does not). In execute mode we pre-empt the
+          # common culprits so a prompt ERRORS at once -- surfacing as a normal
+          # tool error the agent can react to -- instead of hanging the session.
+          # This also changes the shared console's own prompts within THIS
+          # session, which is acceptable: agent access was opted in per launch,
+          # and an errored prompt beats a wedged session. Not a complete fix --
+          # raw readline()/menu() have no option hook and can still block; the
+          # durable answer (per-eval timeout, cancellation, subprocess isolation)
+          # lives upstream in mcptools/btw.
+          if (identical(mode, "execute")) {
+            options(needs.promptUser = FALSE,   # devtools / pkgbuild
+                    renv.consent     = TRUE,     # renv first-use consent
+                    askYesNo = function(msg, ...)
+                      stop("interactive prompt blocked in an MCP execute session: ",
+                           msg, call. = FALSE))
+          }
           message(sprintf("-- MCP: agents in this session's terminal may %s (tools: %s) --",
                           if (identical(mode, "execute")) "read it and RUN R CODE in it"
                           else "read it",

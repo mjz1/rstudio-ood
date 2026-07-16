@@ -30,7 +30,10 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   startup (after renv activation, so project libraries work); one-time
   project setup is the new `rstudio_mcp_init` wrapper. Off is the default and
   changes nothing; no network ports are involved (node-local sockets only),
-  and read-only sessions never expose an execute tool. (#1)
+  and read-only sessions never expose an execute tool. Execute-mode sessions
+  also disarm the interactive prompts that would otherwise deadlock the whole
+  single-threaded session (`devtools`/`renv` install prompts, `askYesNo`) by
+  turning them into an immediate error instead of a hang. (#1)
 
 - Docs: why `install.packages()` can claim a package "is not available" that
   exists on CRAN — every image's mirror is a dated Posit Package Manager

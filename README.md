@@ -201,6 +201,21 @@ console is idle, and requests serialize. In practice:
   that's what the per-call approval in execute mode is for. **Esc interrupts**
   whatever R is evaluating, an agent's call included.
 
+**Code that prompts for input is dangerous here.** The session is single-threaded
+and the agent's console is not one you can type into, so a submitted call that
+asks a question — `devtools`/`renv` "install? [Y/n]", `askYesNo()`, `menu()` —
+would block the R thread on a prompt no one can answer, and because that thread
+also drives the tool-call event loop, the *whole session* deadlocks: every later
+call times out and never recovers (the 120 s timeout is on the server side and
+cannot un-wedge the session). Execute-mode sessions therefore turn the common
+prompts (`needs.promptUser`, `renv.consent`, `askYesNo`) into an immediate
+**error** rather than a hang, which the agent sees as a normal tool error. This
+only covers the hookable prompts — a bare `readline()`/`menu()` in submitted code
+can still block, so prefer non-interactive calls (`library()` or
+`pkgload::load_all(attach = FALSE)` over `devtools::load_all()`), and if a
+session does wedge, restart it. The real fix (per-call timeout and cancellation)
+belongs upstream in `mcptools`/`btw`.
+
 Why this survives you closing the laptop: the agent, its MCP server and the R
 session all run **on the compute node** over node-local sockets — your browser
 is only a viewer. Close the tab or sleep the machine and the work continues; on
