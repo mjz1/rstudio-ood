@@ -210,11 +210,19 @@ call times out and never recovers (the 120 s timeout is on the server side and
 cannot un-wedge the session). Execute-mode sessions therefore turn the common
 prompts (`needs.promptUser`, `renv.consent`, `askYesNo`) into an immediate
 **error** rather than a hang, which the agent sees as a normal tool error. This
-only covers the hookable prompts — a bare `readline()`/`menu()` in submitted code
-can still block, so prefer non-interactive calls (`library()` or
-`pkgload::load_all(attach = FALSE)` over `devtools::load_all()`), and if a
-session does wedge, restart it. The real fix (per-call timeout and cancellation)
-belongs upstream in `mcptools`/`btw`.
+only covers the hookable prompts — a bare `readline()`/`scan()`/`menu()`,
+`browser()`, or an `rstudioapi` dialog (`showQuestion`, `showPrompt`,
+`selectFile`, `askForPassword`) in submitted code still blocks, so prefer
+non-interactive calls (`library()` or `pkgload::load_all(attach = FALSE)` over
+`devtools::load_all()`). If a session does wedge, **Esc in the console
+recovers it** (verified live): the blocked read is interrupted, the session
+returns to top level, and every tool call queued behind it drains — an
+`rstudioapi` dialog can alternatively be answered by clicking it. Either way a
+human must be at the console; the MCP transport carries code in and output
+out, and can neither answer a prompt nor interrupt one, so an unattended run
+stalls at the wedge until someone comes back (nothing is lost — it resumes on
+the keypress). The real fix (per-call timeout and cancellation) belongs
+upstream in `mcptools`/`btw`.
 
 Why this survives you closing the laptop: the agent, its MCP server and the R
 session all run **on the compute node** over node-local sockets — your browser
