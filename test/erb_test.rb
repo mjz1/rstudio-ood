@@ -331,7 +331,8 @@ end
 check('agent access defaults OFF: the wrapper exports nothing MCP-related') do
   # The site profile always CONTAINS the env-gated hook (it is a static file);
   # what must be absent in an Off session is the exports that would arm it.
-  !sh.include?('export RSTUDIO_MCP_ACCESS') && !sh.include?('export BTW_RUN_R_ENABLED')
+  !sh.include?('export RSTUDIO_MCP_ACCESS') && !sh.include?('export BTW_RUN_R_ENABLED') &&
+    !sh.include?('RSTUDIO_MCP_GUARD')
 end
 
 mcp_exec = render(script_erb, context_for(
@@ -382,8 +383,12 @@ end
 # heredoc gated at RUNTIME on RSTUDIO_MCP_ACCESS, so its text renders in every
 # mode and simply never executes here. Assert each where it actually lives,
 # or the test lies about which mechanism protects read mode.
-check('read mode ships no AST gate (no run_r to guard)') do
-  !mcp_read.include?('RSTUDIO_MCP_GUARD')
+# Read mode exports the guard PATH too -- not for wrapping (it serves no
+# run_r; nothing gets wrapped) but because mcp-guard.R also defines the
+# session_status tool, whose server needs the file in every agent mode.
+check('read mode ships the guard path for session_status, with btw\'s gate still closed') do
+  mcp_read.include?('export RSTUDIO_MCP_GUARD="${SESSION_DIR}/mcp-guard.R"') &&
+    mcp_read.include?('export BTW_RUN_R_ENABLED="false"')
 end
 check('the prompt-disarming is runtime-gated on execute, so read mode never applies it') do
   mcp_read.include?('needs.promptUser') &&                      # static text: present
@@ -432,8 +437,10 @@ check('a config tool list that scrubs to empty falls back to the read default, n
   end
   junk.include?('export RSTUDIO_MCP_TOOLS="env,docs,sessioninfo,ide"')
 end
-check('execute mode warns in output.log when the staged guard file is missing') do
-  mcp_exec.include?('run_r will be UNGUARDED') && !mcp_read.include?('run_r will be UNGUARDED')
+check('every agent-enabled mode warns in output.log when the staged guard file is missing') do
+  mcp_exec.include?('run_r would be UNGUARDED') &&
+    mcp_read.include?('run_r would be UNGUARDED') &&   # read needs the file too (session_status)
+    !sh.include?('run_r would be UNGUARDED')           # Off ships nothing MCP
 end
 
 # ------------------------------------------------- the guard artifact itself --
@@ -442,10 +449,12 @@ end
 # text-only template assertions (tried: 61 passed with the feature gone).
 
 guard_src = File.join(APP, 'template', 'mcp-guard.R')
-check('mcp-guard.R ships in template/ and defines guard_btw_tools') do
+check('mcp-guard.R ships in template/ and defines guard_btw_tools + session_status') do
   File.exist?(guard_src) &&
     File.read(guard_src).include?('guard_btw_tools <- function') &&
-    File.read(guard_src).include?('S7::S7_data')
+    File.read(guard_src).include?('S7::S7_data') &&
+    File.read(guard_src).include?('rstudio_session_status <- function') &&
+    File.read(guard_src).include?('.run_r-inflight')   # sentinel both sides read
 end
 check('the guard knows the measured hazards, including the base-R modal') do
   g = File.read(guard_src)
@@ -453,19 +462,27 @@ check('the guard knows the measured hazards, including the base-R modal') do
 end
 
 wrappers_src = File.read(File.join(APP, 'r-wrappers.sh'))
-check('r-wrappers has exactly ONE copy of the server command (write path and snippet cannot drift)') do
-  wrappers_src.scan('mcptools::mcp_server').length == 1
+check('the server commands live in ONE function (write path and snippet cannot drift)') do
+  # two servers, each with one mcp_server call, both inside the single
+  # _rstudio_mcp_entries heredoc -- and nowhere else in the file
+  entry = wrappers_src[/cat <<'ENTRY'\n(.*?)\nENTRY/m, 1].to_s
+  wrappers_src.scan('mcptools::mcp_server').length == 2 &&
+    entry.scan('mcptools::mcp_server').length == 2 &&
+    wrappers_src.scan("<<'ENTRY'").length == 1
 end
-check('the .mcp.json entry is valid JSON and wires the guard with its failure modes') do
-  entry = wrappers_src[/^ENTRY\n(.*?)\nENTRY$/m, 1] ||
-          wrappers_src[/cat <<'ENTRY'\n(.*?)\nENTRY/m, 1]
+check('the .mcp.json entries are valid JSON and wire both servers with their failure modes') do
+  entry = wrappers_src[/cat <<'ENTRY'\n(.*?)\nENTRY/m, 1]
   next false unless entry
   doc = JSON.parse("{\n  \"mcpServers\": {\n#{entry}\n  }\n}")
   cmd = doc.dig('mcpServers', 'r-session', 'args', 2).to_s
+  status = doc.dig('mcpServers', 'r-session-status', 'args', 2).to_s
   cmd.include?('RSTUDIO_MCP_GUARD') &&        # sources the gate
     cmd.include?('guard_btw_tools(') &&       # and applies it
     cmd.include?('broken deploy') &&          # stop()s on set-but-missing
-    cmd.include?("if (!nzchar(tl)) tl <- 'env,docs,sessioninfo'")  # empty != unset
+    cmd.include?("if (!nzchar(tl)) tl <- 'env,docs,sessioninfo'") &&  # empty != unset
+    status.include?('rstudio_session_status()') &&
+    status.include?('session_tools = FALSE') &&   # server-side, or it queues behind the wedge
+    status.include?('broken deploy')
 end
 
 # The slot becomes a path component. It must not be able to escape the sessions

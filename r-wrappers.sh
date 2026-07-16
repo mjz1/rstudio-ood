@@ -316,9 +316,14 @@ rstudio_slots() {
 # only when a variable is UNSET, and btw_tools() with no names serves btw's
 # ENTIRE default set -- files/git/web tools included.
 
-# The one and only copy of the r-session server entry: printed for paste-by-
-# hand and embedded by the write path below, so the two can never drift.
-_rstudio_mcp_entry() {
+# The one and only copy of the server entries: printed for paste-by-hand and
+# embedded by the write path below, so the two can never drift. TWO servers,
+# deliberately: once the primary (r-session) connects to a session, mcptools
+# forwards EVERY tool call there -- so a status tool it served would queue
+# behind the very wedge it diagnoses. r-session-status runs with
+# session_tools = FALSE (tools execute in its own process) and reads /proc,
+# which works precisely when the session is unresponsive.
+_rstudio_mcp_entries() {
     cat <<'ENTRY'
     "r-session": {
       "command": "Rscript",
@@ -326,6 +331,14 @@ _rstudio_mcp_entry() {
         "--no-init-file",
         "-e",
         "local({ tl <- Sys.getenv('RSTUDIO_MCP_TOOLS'); if (!nzchar(tl)) tl <- 'env,docs,sessioninfo'; t <- do.call(btw::btw_tools, as.list(Filter(nzchar, strsplit(tl, ',')[[1]]))); g <- Sys.getenv('RSTUDIO_MCP_GUARD'); if (nzchar(g)) { if (!file.exists(g)) stop('RSTUDIO_MCP_GUARD is set but the file is missing (broken deploy?): ', g); source(g, local = TRUE); t <- guard_btw_tools(t) }; mcptools::mcp_server(tools = t) })"
+      ]
+    },
+    "r-session-status": {
+      "command": "Rscript",
+      "args": [
+        "--no-init-file",
+        "-e",
+        "local({ g <- Sys.getenv('RSTUDIO_MCP_GUARD'); if (!nzchar(g)) stop('not inside an agent-enabled RStudio session (RSTUDIO_MCP_GUARD unset)'); if (!file.exists(g)) stop('RSTUDIO_MCP_GUARD is set but the file is missing (broken deploy?): ', g); source(g, local = TRUE); mcptools::mcp_server(tools = list(rstudio_session_status()), session_tools = FALSE) })"
       ]
     }
 ENTRY
@@ -342,15 +355,16 @@ rstudio_mcp_init() {
             # forever -- and .mcp.json is committable, so a stale copy
             # propagates to everyone who clones the project. Detect the guard
             # by its function name and say exactly what to do.
-            if grep -q 'guard_btw_tools' "$f" 2>/dev/null; then
-                echo "already configured: $f (r-session server, run_r guard wired)"
+            if grep -q 'guard_btw_tools' "$f" 2>/dev/null &&
+               grep -q '"r-session-status"' "$f" 2>/dev/null; then
+                echo "already configured: $f (r-session + status servers, run_r guard wired)"
                 return 0
             fi
             {
-                echo "$f has an \"r-session\" server that PREDATES the run_r guard:"
-                echo "agent code that prompts for input would DEADLOCK the session."
-                echo "Replace the \"r-session\" entry with:"
-                _rstudio_mcp_entry
+                echo "$f has an \"r-session\" server from an OLDER app version"
+                echo "(missing the run_r deadlock guard and/or the session-status server)."
+                echo "Replace the \"r-session\" entry with BOTH of:"
+                _rstudio_mcp_entries
             } >&2
             return 1
         fi
@@ -359,14 +373,14 @@ rstudio_mcp_init() {
         # a "see the source" pointer here is useless at the moment it appears.
         {
             echo "refusing to modify existing $f -- paste this into its \"mcpServers\" object:"
-            _rstudio_mcp_entry
+            _rstudio_mcp_entries
         } >&2
         return 1
     fi
     {
         echo '{'
         echo '  "mcpServers": {'
-        _rstudio_mcp_entry
+        _rstudio_mcp_entries
         echo '  }'
         echo '}'
     } > "$f"

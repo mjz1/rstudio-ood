@@ -215,16 +215,15 @@ echo "RStudio session slot: ${SESSION_SLOT}  (state in ${SLOT_DIR}/data; cache +
 # rsession.sh live in it). Captured before the `cd "${HOME}"` below -- the
 # rsession file logger writes here so its logs travel with the session.
 SESSION_DIR="${PWD}"
-<%- if agent_access == 'execute' -%>
+<%- if agent_access != 'off' -%>
 
-# An execute session MUST have its AST gate (mcp-guard.R, staged with the app's
-# template/). If it is missing, the .mcp.json command's file.exists() check
-# quietly skips the wrapping and serves an UNGUARDED run_r -- correct behaviour
-# for read mode and terminals outside a session, but in execute mode it means a
-# broken deploy, and silence is how that ships. Warn where it lands in
-# output.log; the .mcp.json command additionally stop()s on set-but-missing.
+# An agent-enabled session MUST have mcp-guard.R (staged with the app's
+# template/): execute mode needs the run_r AST gate, every mode needs the
+# session_status tool it also defines. Both .mcp.json commands stop() on a
+# set-but-missing path, but that error surfaces in the agent's server log --
+# warn HERE too, where output.log makes a broken deploy visible to the user.
 if [ ! -r "${SESSION_DIR}/mcp-guard.R" ]; then
-  echo "WARNING: MCP guard missing at ${SESSION_DIR}/mcp-guard.R -- run_r will be UNGUARDED (broken deploy?)" >&2
+  echo "WARNING: MCP guard missing at ${SESSION_DIR}/mcp-guard.R -- run_r would be UNGUARDED and session_status unavailable (broken deploy?)" >&2
 fi
 <%- end -%>
 
@@ -275,15 +274,14 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # tool list.
   export RSTUDIO_MCP_ACCESS="<%= agent_access %>"
   export RSTUDIO_MCP_TOOLS="<%= mcp_tools %>"
-<%- if agent_access == 'execute' -%>
-  export BTW_RUN_R_ENABLED="true"
-  # The AST gate (see mcp-guard.R). The agent's MCP server sources this to wrap
-  # btw's run_r, so code that would block on console/UI input is refused before
-  # it reaches the session. Exported as a PATH rather than baked into .mcp.json
-  # so the committed .mcp.json stays portable across users and app versions --
-  # same reason RSTUDIO_MCP_TOOLS travels this way. Unset (read-only sessions,
-  # or a terminal outside a session) simply means no wrapping: the .mcp.json
-  # command tolerates it, and read mode has no run_r to guard anyway.
+  # mcp-guard.R: the run_r AST gate AND the session_status tool, sourced by
+  # both .mcp.json server commands. Exported in read mode too -- read sessions
+  # serve no run_r (nothing gets wrapped), but the status server still needs
+  # the file for its idle/busy/dead observation. Exported as a PATH rather
+  # than baked into .mcp.json so the committed .mcp.json stays portable across
+  # users and app versions -- same reason RSTUDIO_MCP_TOOLS travels this way.
+  # Unset (a terminal outside any session) means no wrapping and a cleanly
+  # erroring status server.
   #
   # Anchored to the STAGING dir, not app_dir: staged apps share one config, so
   # RSTUDIO_APP_DIR points at the stable app (rstudio_dev) -- which deploys from
@@ -292,6 +290,8 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # staging dir, so this path always matches the app that launched the session
   # (same reason bin/auth is referenced via \$PWD above).
   export RSTUDIO_MCP_GUARD="${SESSION_DIR}/mcp-guard.R"
+<%- if agent_access == 'execute' -%>
+  export BTW_RUN_R_ENABLED="true"
 <%- else -%>
   # An EXPLICIT false, not mere absence. btw's env var only gates its DEFAULT
   # tool set; a tool list that names run_r (a config override could) would be
