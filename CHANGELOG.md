@@ -98,13 +98,16 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 - RStudio's internal log records no longer print into the R console. The
   session process forwards its own stderr to the console, and the app's
   logging override — needed so *server* startup failures reach `output.log` —
-  also pointed the session's logger at stderr, so benign records (chiefly the
-  memory monitor's `/proc` read races: `Proc stat file … missing value`, a
-  process exiting between enumeration and read) sprayed into every console,
-  timestamps and all. The session now logs to `logs/` inside the session's
-  OnDemand output directory: out of the console, kept for debugging, next to
-  `output.log`. The server keeps logging to stderr, so launch failures stay
-  visible in `output.log`.
+  also pointed the session's logger at stderr, so benign records sprayed into
+  every console, timestamps and all: the memory monitor's `/proc` read races
+  (`Proc stat file … missing value`, a process exiting between enumeration and
+  read) and the Posit Assistant backend's stderr (the SQLite
+  `ExperimentalWarning`, re-logged at `ERROR`). `logging.conf` now defaults
+  *every* logger to a file under `logs/` in the session's OnDemand output
+  directory, with only `rserver` on stderr — so launch failures still reach
+  `output.log`, while every session-side record (including Assistant
+  sub-loggers that a per-`rsession` rule slipped past) stays out of the
+  console and next to `output.log` for debugging.
 
 ### Removed
 

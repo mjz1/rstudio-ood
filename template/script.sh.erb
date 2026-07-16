@@ -452,23 +452,32 @@ chmod 600 "${TMPDIR}/database.conf"
 # land in this job's output.log instead.
 #
 # rsession must NOT log to stderr: after startup it captures its own stderr and
-# forwards it into the R console, so a stderr logger prints every log record --
-# e.g. the benign /proc read races from the memory-usage monitor ("Proc stat
-# file ... missing value": a short-lived process exiting between enumeration
-# and read) -- into the user's console, timestamps and all. (rocker's syslog
-# default never touched stderr, which is why stock images seem "quiet".) Log
-# rsession to a file in the session output dir instead: out of the console,
-# kept for debugging, right next to output.log.
+# forwards it into the R console, so a stderr logger prints every log record
+# into the user's console, timestamps and all -- the benign /proc read races
+# from the memory-usage monitor ("Proc stat file ... missing value"), AND every
+# line the Posit Assistant's Node backend writes to stderr, which rsession
+# re-logs at ERROR (SessionAssistant.cpp onStderr: the SQLite ExperimentalWarning).
+#
+# So FILE is the default and stderr is the exception, not the reverse. An
+# earlier version keyed the file logger on [rsession] alone with [*] still on
+# stderr; anything rsession logs under a scope that section does not catch
+# (the Assistant's onStderr among them) fell through [*] to stderr and reached
+# the console anyway. Defaulting [*] to file closes that whole class: every
+# rsession-side logger, named or not, lands in the session's logs/ dir. Only
+# rserver is pulled back to stderr -- its startup failures must reach output.log
+# (there is no syslog in the container; rocker's syslog default hid them), and
+# rserver does not forward stderr to any console. A session that genuinely fails
+# to start still surfaces: rserver logs the failure to output.log.
 mkdir -p "${SESSION_DIR}/logs"
 cat > "${TMPDIR}/logging.conf" <<LOGCONF
 [*]
 log-level=warn
-logger-type=stderr
-
-[rsession]
-log-level=warn
 logger-type=file
 log-dir=${SESSION_DIR}/logs
+
+[rserver]
+log-level=warn
+logger-type=stderr
 LOGCONF
 
 # Never IDLE-suspend the session. Suspension exists to free memory for other

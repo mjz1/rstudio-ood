@@ -351,12 +351,15 @@ and how the test suite works: **[docs/development.md](docs/development.md)**.
     definition, and recurring: the monitor polls for as long as the session
     runs.
 
-  They cannot be turned down — RStudio emits them at `ERROR`, above any log
-  threshold the app can set — but they no longer land anywhere a user has to
-  look: the session process logs to `logs/` inside the session's output
-  directory (next to `output.log`), not to the R console or `output.log`. A
-  session that *genuinely* fails to start does not merely log — it never
-  connects, and the server's own startup errors still go to `output.log`.
+  They cannot be turned *down* — RStudio emits them at `ERROR`, above any log
+  threshold the app can set — but they are turned *aside*: `logging.conf`
+  defaults every logger to a file under `logs/` (next to `output.log`), so the
+  session process's records, including the Assistant backend's, never reach the
+  R console. Only `rserver` is routed to stderr, so a session that *genuinely*
+  fails to start still surfaces — its startup errors go to `output.log`. (The
+  earlier config keyed the file logger on the `rsession` scope alone, and
+  records the Assistant logged under a different sub-scope slipped through the
+  stderr default into the console; defaulting to file closes that.)
 - **`install.packages()` says a package "is not available" that clearly exists
   on CRAN.** Older R images pin their CRAN mirror to a dated snapshot from
   that R version's era (deliberate; the newest image tracks current CRAN), so

@@ -288,15 +288,18 @@ check('update NOTICE: non-blocking version check, surfaced in the R banner, neve
     sh.include?('What changed:') &&                              # banner links the changelog
     !sh.match?(/git pull|--app-only[^"]*\|\s*bash.*<%/)         # no self-update machinery
 end
-check('rserver logs to stderr (output.log), rsession to a file in the session dir') do
-  # rsession forwards its own stderr into the R console after startup, so a
-  # stderr logger for rsession sprays benign /proc-race ERRORs at the user.
-  # rserver must KEEP stderr: startup failures otherwise vanish (no syslog).
+check('logging defaults to a session-dir file; ONLY rserver keeps stderr (output.log)') do
+  # rsession forwards its own stderr into the R console after startup, so ANY
+  # rsession-side logger on stderr reaches the user -- the /proc-race monitor
+  # AND the Posit Assistant's onStderr re-logging. File must therefore be the
+  # DEFAULT, not a per-[rsession] carve-out that sub-loggers slip past. rserver
+  # is the one exception: startup failures must reach output.log (no syslog).
   logconf = sh[/cat > "\$\{TMPDIR\}\/logging\.conf" <<LOGCONF\n(.*?)\nLOGCONF/m, 1].to_s
-  logconf.include?("[*]\nlog-level=warn\nlogger-type=stderr") &&
-    logconf.include?("[rsession]") &&
-    logconf[/\[rsession\].*?logger-type=(\w+)/m, 1] == 'file' &&
+  logconf.include?("[*]\nlog-level=warn\nlogger-type=file") &&
     logconf.include?('log-dir=${SESSION_DIR}/logs') &&
+    logconf[/\[rserver\].*?logger-type=(\w+)/m, 1] == 'stderr' &&
+    # the default must NOT be stderr, or sub-loggers leak to the console again
+    !logconf.match?(/\[\*\]\nlog-level=warn\nlogger-type=stderr/) &&
     sh.include?('mkdir -p "${SESSION_DIR}/logs"') &&
     sh.include?('SESSION_DIR="${PWD}"')
 end
