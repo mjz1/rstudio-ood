@@ -301,6 +301,15 @@ rstudio_slots() {
 # R_LIBS_USER is the session's per-version library. If a project somehow needs
 # its profile, the narrower fix is an "env" block with
 # RENV_CONFIG_SYNCHRONIZED_CHECK=FALSE instead.
+#
+# The server command sources RSTUDIO_MCP_GUARD (template/mcp-guard.R, exported
+# by an execute-mode session) to wrap run_r with the AST gate that refuses
+# session-wedging calls -- see that file and issue #2. Both are read from the
+# ENVIRONMENT, never baked in: the same committed .mcp.json then works for
+# every user and every app version, and the launch form stays in control of
+# what a session actually exposes. Unset means no wrapping, which is why the
+# command tests file.exists() rather than assuming -- a read-only session
+# exports no guard and has no run_r to guard.
 rstudio_mcp_init() {
     local dir="${1:-.}" f
     [ -d "$dir" ] || { echo "no such directory: $dir" >&2; return 1; }
@@ -321,7 +330,7 @@ rstudio_mcp_init() {
       "args": [
         "--no-init-file",
         "-e",
-        "mcptools::mcp_server(tools = do.call(btw::btw_tools, as.list(strsplit(Sys.getenv('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo'), ',')[[1]])))"
+        "local({ t <- do.call(btw::btw_tools, as.list(strsplit(Sys.getenv('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo'), ',')[[1]])); g <- Sys.getenv('RSTUDIO_MCP_GUARD'); if (nzchar(g) && file.exists(g)) { source(g, local = TRUE); t <- guard_btw_tools(t) }; mcptools::mcp_server(tools = t) })"
       ]
     }
 SNIPPET
@@ -336,7 +345,7 @@ SNIPPET
       "args": [
         "--no-init-file",
         "-e",
-        "mcptools::mcp_server(tools = do.call(btw::btw_tools, as.list(strsplit(Sys.getenv('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo'), ',')[[1]])))"
+        "local({ t <- do.call(btw::btw_tools, as.list(strsplit(Sys.getenv('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo'), ',')[[1]])); g <- Sys.getenv('RSTUDIO_MCP_GUARD'); if (nzchar(g) && file.exists(g)) { source(g, local = TRUE); t <- guard_btw_tools(t) }; mcptools::mcp_server(tools = t) })"
       ]
     }
   }

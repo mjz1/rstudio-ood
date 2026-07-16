@@ -209,23 +209,30 @@ also drives the tool-call event loop, the *whole session* deadlocks: every later
 call times out and never recovers (the 120 s timeout is on the server side and
 cannot un-wedge the session). Execute-mode sessions therefore turn the common
 prompts (`needs.promptUser`, `renv.consent`, `askYesNo`) into an immediate
-**error** rather than a hang, which the agent sees as a normal tool error. This
-only covers the hookable prompts — a bare `readline()`/`scan()`/`menu()`,
-`browser()`, or an `rstudioapi` dialog (`showQuestion`, `showPrompt`,
-`selectFile`, `askForPassword`) in submitted code still blocks, so prefer
-non-interactive calls (`library()` or `pkgload::load_all(attach = FALSE)` over
-`devtools::load_all()`). If a session does wedge, **a human at the console
-recovers it** (verified live): **Esc** interrupts a blocked `readline()` or
-dialog, **clicking** answers an `rstudioapi` modal, and **`Q`** exits a
-`browser()` wedge — the debugger prompt works normally throughout. There is
-no machine path: the MCP transport carries code in and output out, and can
-neither answer a prompt nor interrupt one, so an unattended run stalls at the
-wedge until someone comes back. While it waits, **leave the session alone** —
-probing a wedged session with further tool calls is not a free read: the
-queued callbacks can error during recovery and corrupt console input, so a
-call that times out should be treated as possibly lost, and diagnostics saved
-for after the human has cleared the console. The real fix (per-call timeout
-and cancellation) belongs upstream in `mcptools`/`btw`.
+**error** rather than a hang, which the agent sees as a normal tool error. Those options catch the prompts that fire from *inside* package code, which no
+code inspection could see. The **direct** calls an agent might write are caught
+earlier, at the door: the MCP server wraps `run_r` so submitted code is parsed
+and screened **before** it reaches the session, and anything that waits for
+console or UI input — `readline`, `scan`, `menu`, `browser`, `readLines("stdin")`,
+`rstudioapi::showQuestion` and friends — comes back as an explanatory error
+instead of a deadlock. It parses rather than greps, so `# readline() here`, the
+string `"readline"`, and `readLines("data.txt")` all pass untouched. The guard
+travels with the tool, so it protects **any** MCP client, not just Claude Code.
+
+Neither layer can see through indirection (`do.call`, `eval(parse())`) or into a
+`source()`d file, so prefer non-interactive calls (`library()` or
+`pkgload::load_all(attach = FALSE)` over `devtools::load_all()`). If a session
+does wedge, **a human at the console recovers it** (verified live): **Esc**
+interrupts a blocked `readline()` or dialog, **clicking** answers an
+`rstudioapi` modal, and **`Q`** exits a `browser()` wedge — the debugger prompt
+works normally throughout. There is no machine path: the MCP transport carries
+code in and output out, and can neither answer a prompt nor interrupt one, so
+an unattended run stalls at the wedge until someone comes back. While it waits,
+**leave the session alone** — probing a wedged session with further tool calls
+is not a free read: the queued callbacks can error during recovery and corrupt
+console input, so a call that times out should be treated as possibly lost, and
+diagnostics saved for after the human has cleared the console. The real fix
+(per-call timeout and cancellation) belongs upstream in `mcptools`/`btw`.
 
 Why this survives you closing the laptop: the agent, its MCP server and the R
 session all run **on the compute node** over node-local sockets — your browser

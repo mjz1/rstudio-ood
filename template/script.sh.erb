@@ -253,6 +253,21 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   export RSTUDIO_MCP_TOOLS="<%= mcp_tools %>"
 <%- if agent_access == 'execute' -%>
   export BTW_RUN_R_ENABLED="true"
+  # The AST gate (see mcp-guard.R). The agent's MCP server sources this to wrap
+  # btw's run_r, so code that would block on console/UI input is refused before
+  # it reaches the session. Exported as a PATH rather than baked into .mcp.json
+  # so the committed .mcp.json stays portable across users and app versions --
+  # same reason RSTUDIO_MCP_TOOLS travels this way. Unset (read-only sessions,
+  # or a terminal outside a session) simply means no wrapping: the .mcp.json
+  # command tolerates it, and read mode has no run_r to guard anyway.
+  #
+  # Anchored to the STAGING dir, not app_dir: staged apps share one config, so
+  # RSTUDIO_APP_DIR points at the stable app (rstudio_dev) -- which deploys from
+  # main and has no mcp-guard.R at all. That would resolve to a missing file and
+  # silently serve an UNGUARDED run_r. OnDemand copies template/ into the job's
+  # staging dir, so this path always matches the app that launched the session
+  # (same reason bin/auth is referenced via \$PWD above).
+  export RSTUDIO_MCP_GUARD="${SESSION_DIR}/mcp-guard.R"
 <%- end -%>
 <%- end -%>
 

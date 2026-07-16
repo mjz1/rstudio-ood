@@ -348,6 +348,19 @@ end
 check('the site profile registers the session via the rstudio.sessionInit hook (fires after renv)') do
   mcp_exec.include?('rstudio.sessionInit') && mcp_exec.include?('mcptools::mcp_session()')
 end
+check('execute mode disarms the hookable prompts that would deadlock the session') do
+  mcp_exec.include?('needs.promptUser = FALSE') &&
+    mcp_exec.include?('renv.consent     = TRUE') &&
+    mcp_exec.include?('askYesNo = function(msg, ...)')
+end
+# The AST gate must be anchored to the STAGING dir. app_dir would point at the
+# stable app for every staged app (they share one config), resolving to a
+# missing file and silently serving an UNGUARDED run_r -- so assert the shape,
+# not just the presence.
+check('execute mode points the MCP guard at the staged copy, never at app_dir') do
+  mcp_exec.include?('export RSTUDIO_MCP_GUARD="${SESSION_DIR}/mcp-guard.R"') &&
+    !mcp_exec.match?(%r{RSTUDIO_MCP_GUARD="/.*ondemand/dev/rstudio_dev})
+end
 
 mcp_read = render(script_erb, context_for(
   rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
@@ -358,6 +371,18 @@ check('read mode: no run_r or pkg in the tool list and no execute gate (read-onl
     !mcp_read.match?(/export RSTUDIO_MCP_TOOLS="[^"]*run_r/) &&
     !mcp_read.match?(/export RSTUDIO_MCP_TOOLS="[^"]*,pkg/) &&
     !mcp_read.include?('export BTW_RUN_R_ENABLED')
+end
+# Read mode has no run_r, so it gets no AST gate. The gate is ERB-gated and
+# really is absent; the prompt-disarming is not -- the site profile is a STATIC
+# heredoc gated at RUNTIME on RSTUDIO_MCP_ACCESS, so its text renders in every
+# mode and simply never executes here. Assert each where it actually lives,
+# or the test lies about which mechanism protects read mode.
+check('read mode ships no AST gate (no run_r to guard)') do
+  !mcp_read.include?('RSTUDIO_MCP_GUARD')
+end
+check('the prompt-disarming is runtime-gated on execute, so read mode never applies it') do
+  mcp_read.include?('needs.promptUser') &&                      # static text: present
+    mcp_read.include?('if (identical(mode, "execute")) {')      # but gated at runtime
 end
 
 mcp_evil = render(script_erb, context_for(

@@ -30,10 +30,19 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   startup (after renv activation, so project libraries work); one-time
   project setup is the new `rstudio_mcp_init` wrapper. Off is the default and
   changes nothing; no network ports are involved (node-local sockets only),
-  and read-only sessions never expose an execute tool. Execute-mode sessions
-  also disarm the interactive prompts that would otherwise deadlock the whole
-  single-threaded session (`devtools`/`renv` install prompts, `askYesNo`) by
-  turning them into an immediate error instead of a hang. (#1)
+  and read-only sessions never expose an execute tool. (#1)
+
+- **MCP sessions are guarded against the prompt deadlock.** Agent-submitted
+  code that waits for console or UI input would block the single-threaded R
+  session's event loop and wedge it permanently — every later tool call timing
+  out, recoverable only by a human at the console. Two layers now prevent it:
+  execute-mode sessions disarm the prompts that fire from inside package code
+  (`devtools`/`renv` install prompts, `askYesNo`), and the MCP server screens
+  submitted code before it reaches the session, refusing `readline`, `scan`,
+  `menu`, `browser`, `readLines("stdin")` and the interactive `rstudioapi`
+  dialogs with an explanatory error. The screen parses rather than greps, so
+  mentions in comments and strings pass; it wraps the tool itself, so it
+  protects every MCP client rather than one vendor's. (#2)
 
 - Docs: why `install.packages()` can claim a package "is not available" that
   exists on CRAN — every image's mirror is a dated Posit Package Manager
