@@ -307,50 +307,69 @@ rstudio_slots() {
 # session-wedging calls -- see that file and issue #2. Both are read from the
 # ENVIRONMENT, never baked in: the same committed .mcp.json then works for
 # every user and every app version, and the launch form stays in control of
-# what a session actually exposes. Unset means no wrapping, which is why the
-# command tests file.exists() rather than assuming -- a read-only session
-# exports no guard and has no run_r to guard.
+# what a session actually exposes. GUARD unset means no wrapping (a read-only
+# session exports none and has no run_r to guard) -- but set-and-MISSING is a
+# broken deploy, and the command stop()s rather than silently serving an
+# unguarded run_r; the error lands on stderr, which is safe for a stdio MCP
+# server (only stdout carries JSON-RPC). RSTUDIO_MCP_TOOLS set-but-EMPTY falls
+# back to the read default in R, deliberately: Sys.getenv()'s fallback applies
+# only when a variable is UNSET, and btw_tools() with no names serves btw's
+# ENTIRE default set -- files/git/web tools included.
+
+# The one and only copy of the r-session server entry: printed for paste-by-
+# hand and embedded by the write path below, so the two can never drift.
+_rstudio_mcp_entry() {
+    cat <<'ENTRY'
+    "r-session": {
+      "command": "Rscript",
+      "args": [
+        "--no-init-file",
+        "-e",
+        "local({ tl <- Sys.getenv('RSTUDIO_MCP_TOOLS'); if (!nzchar(tl)) tl <- 'env,docs,sessioninfo'; t <- do.call(btw::btw_tools, as.list(Filter(nzchar, strsplit(tl, ',')[[1]]))); g <- Sys.getenv('RSTUDIO_MCP_GUARD'); if (nzchar(g)) { if (!file.exists(g)) stop('RSTUDIO_MCP_GUARD is set but the file is missing (broken deploy?): ', g); source(g, local = TRUE); t <- guard_btw_tools(t) }; mcptools::mcp_server(tools = t) })"
+      ]
+    }
+ENTRY
+}
+
 rstudio_mcp_init() {
     local dir="${1:-.}" f
     [ -d "$dir" ] || { echo "no such directory: $dir" >&2; return 1; }
     f="$dir/.mcp.json"
     if [ -e "$f" ]; then
         if grep -q '"r-session"' "$f" 2>/dev/null; then
-            echo "already configured: $f (has an \"r-session\" server)"
-            return 0
+            # "Has an r-session server" is not "has the CURRENT one". A file
+            # written before the guard existed serves an UNGUARDED run_r
+            # forever -- and .mcp.json is committable, so a stale copy
+            # propagates to everyone who clones the project. Detect the guard
+            # by its function name and say exactly what to do.
+            if grep -q 'guard_btw_tools' "$f" 2>/dev/null; then
+                echo "already configured: $f (r-session server, run_r guard wired)"
+                return 0
+            fi
+            {
+                echo "$f has an \"r-session\" server that PREDATES the run_r guard:"
+                echo "agent code that prompts for input would DEADLOCK the session."
+                echo "Replace the \"r-session\" entry with:"
+                _rstudio_mcp_entry
+            } >&2
+            return 1
         fi
         # Never rewrite a file another tool owns half of: merging JSON in bash
         # is how files get corrupted. Print the EXACT entry to paste instead --
         # a "see the source" pointer here is useless at the moment it appears.
         {
             echo "refusing to modify existing $f -- paste this into its \"mcpServers\" object:"
-            cat <<'SNIPPET'
-    "r-session": {
-      "command": "Rscript",
-      "args": [
-        "--no-init-file",
-        "-e",
-        "local({ t <- do.call(btw::btw_tools, as.list(strsplit(Sys.getenv('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo'), ',')[[1]])); g <- Sys.getenv('RSTUDIO_MCP_GUARD'); if (nzchar(g) && file.exists(g)) { source(g, local = TRUE); t <- guard_btw_tools(t) }; mcptools::mcp_server(tools = t) })"
-      ]
-    }
-SNIPPET
+            _rstudio_mcp_entry
         } >&2
         return 1
     fi
-    cat > "$f" <<'MCPJSON'
-{
-  "mcpServers": {
-    "r-session": {
-      "command": "Rscript",
-      "args": [
-        "--no-init-file",
-        "-e",
-        "local({ t <- do.call(btw::btw_tools, as.list(strsplit(Sys.getenv('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo'), ',')[[1]])); g <- Sys.getenv('RSTUDIO_MCP_GUARD'); if (nzchar(g) && file.exists(g)) { source(g, local = TRUE); t <- guard_btw_tools(t) }; mcptools::mcp_server(tools = t) })"
-      ]
-    }
-  }
-}
-MCPJSON
+    {
+        echo '{'
+        echo '  "mcpServers": {'
+        _rstudio_mcp_entry
+        echo '  }'
+        echo '}'
+    } > "$f"
     echo "wrote $f"
     echo "  1. install the R packages into this project's library:  install.packages(c('mcptools','btw'))"
     echo "  2. launch a session with 'AI agent access' enabled on the form"

@@ -355,22 +355,27 @@ check('execute mode disarms the hookable prompts that would deadlock the session
 end
 # The AST gate must be anchored to the STAGING dir. app_dir would point at the
 # stable app for every staged app (they share one config), resolving to a
-# missing file and silently serving an UNGUARDED run_r -- so assert the shape,
-# not just the presence.
+# missing file and silently serving an UNGUARDED run_r. The negative clause
+# checks against the FIXTURE's app dir (APPDIR) -- a hard-coded
+# "ondemand/dev/rstudio_dev" pattern could never fire here, because the
+# hermetic fixture's app dir doesn't contain that path.
 check('execute mode points the MCP guard at the staged copy, never at app_dir') do
   mcp_exec.include?('export RSTUDIO_MCP_GUARD="${SESSION_DIR}/mcp-guard.R"') &&
-    !mcp_exec.match?(%r{RSTUDIO_MCP_GUARD="/.*ondemand/dev/rstudio_dev})
+    !mcp_exec.match?(/RSTUDIO_MCP_GUARD="#{Regexp.escape(APPDIR)}/)
 end
 
 mcp_read = render(script_erb, context_for(
   rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
   session_name: 'default', new_session_name: '', agent_access: 'read'
 ).instance_eval { context = self; binding })
-check('read mode: no run_r or pkg in the tool list and no execute gate (read-only means read-only)') do
+check('read mode: no run_r or pkg in the tool list, and btw\'s gate closed EXPLICITLY') do
   mcp_read.include?('export RSTUDIO_MCP_ACCESS="read"') &&
     !mcp_read.match?(/export RSTUDIO_MCP_TOOLS="[^"]*run_r/) &&
     !mcp_read.match?(/export RSTUDIO_MCP_TOOLS="[^"]*,pkg/) &&
-    !mcp_read.include?('export BTW_RUN_R_ENABLED')
+    # an explicit false, not absence: btw serves an explicitly NAMED run_r
+    # with the var unset (match_mode = "explicit"), so absence is not safety
+    mcp_read.include?('export BTW_RUN_R_ENABLED="false"') &&
+    !mcp_read.include?('export BTW_RUN_R_ENABLED="true"')
 end
 # Read mode has no run_r, so it gets no AST gate. The gate is ERB-gated and
 # really is absent; the prompt-disarming is not -- the site profile is a STATIC
@@ -391,6 +396,76 @@ mcp_evil = render(script_erb, context_for(
 ).instance_eval { context = self; binding })
 check('an unrecognised agent_access value is allowlisted down to Off, never interpolated') do
   !mcp_evil.include?('export RSTUDIO_MCP_ACCESS') && !mcp_evil.include?('rm -rf')
+end
+
+# btw's BTW_RUN_R_ENABLED only gates its DEFAULT tool set -- a list that NAMES
+# run_r is served regardless (match_mode = "explicit", btw 1.3.0). So read-only
+# needs two mechanisms and both get asserted: the execute tools are FILTERED
+# out of the list even when config injects them, and the env var is exported
+# as an explicit "false", not left absent.
+check('read mode strips run_r/pkg injected via config, and closes btw\'s gate explicitly') do
+  conf_run_r = File.join(FIX, 'config-run-r')
+  File.write(conf_run_r, File.read(CONFIG) + "RSTUDIO_MCP_TOOLS=env,docs,run_r,pkg\n")
+  begin
+    ENV['RSTUDIO_DEV_CONFIG'] = conf_run_r
+    injected = render(script_erb, context_for(
+      rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+      session_name: 'default', new_session_name: '', agent_access: 'read'
+    ).instance_eval { context = self; binding })
+  ensure
+    ENV['RSTUDIO_DEV_CONFIG'] = CONFIG
+  end
+  injected.include?('export RSTUDIO_MCP_TOOLS="env,docs"') &&
+    injected.include?('export BTW_RUN_R_ENABLED="false"')
+end
+check('a config tool list that scrubs to empty falls back to the read default, not btw\'s full set') do
+  conf_junk = File.join(FIX, 'config-junk-tools')
+  File.write(conf_junk, File.read(CONFIG) + "RSTUDIO_MCP_TOOLS=!!!\n")
+  begin
+    ENV['RSTUDIO_DEV_CONFIG'] = conf_junk
+    junk = render(script_erb, context_for(
+      rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+      session_name: 'default', new_session_name: '', agent_access: 'read'
+    ).instance_eval { context = self; binding })
+  ensure
+    ENV['RSTUDIO_DEV_CONFIG'] = CONFIG
+  end
+  junk.include?('export RSTUDIO_MCP_TOOLS="env,docs,sessioninfo,ide"')
+end
+check('execute mode warns in output.log when the staged guard file is missing') do
+  mcp_exec.include?('run_r will be UNGUARDED') && !mcp_read.include?('run_r will be UNGUARDED')
+end
+
+# ------------------------------------------------- the guard artifact itself --
+# The suite cannot run R, but it CAN assert the artifact exists and is wired --
+# which is exactly what "delete mcp-guard.R and strip the wiring" gets past
+# text-only template assertions (tried: 61 passed with the feature gone).
+
+guard_src = File.join(APP, 'template', 'mcp-guard.R')
+check('mcp-guard.R ships in template/ and defines guard_btw_tools') do
+  File.exist?(guard_src) &&
+    File.read(guard_src).include?('guard_btw_tools <- function') &&
+    File.read(guard_src).include?('S7::S7_data')
+end
+check('the guard knows the measured hazards, including the base-R modal') do
+  g = File.read(guard_src)
+  %w[readline browser file.choose showQuestion getPass locator].all? { |h| g.include?(h) }
+end
+
+wrappers_src = File.read(File.join(APP, 'r-wrappers.sh'))
+check('r-wrappers has exactly ONE copy of the server command (write path and snippet cannot drift)') do
+  wrappers_src.scan('mcptools::mcp_server').length == 1
+end
+check('the .mcp.json entry is valid JSON and wires the guard with its failure modes') do
+  entry = wrappers_src[/^ENTRY\n(.*?)\nENTRY$/m, 1] ||
+          wrappers_src[/cat <<'ENTRY'\n(.*?)\nENTRY/m, 1]
+  next false unless entry
+  doc = JSON.parse("{\n  \"mcpServers\": {\n#{entry}\n  }\n}")
+  cmd = doc.dig('mcpServers', 'r-session', 'args', 2).to_s
+  cmd.include?('RSTUDIO_MCP_GUARD') &&        # sources the gate
+    cmd.include?('guard_btw_tools(') &&       # and applies it
+    cmd.include?('broken deploy') &&          # stop()s on set-but-missing
+    cmd.include?("if (!nzchar(tl)) tl <- 'env,docs,sessioninfo'")  # empty != unset
 end
 
 # The slot becomes a path component. It must not be able to escape the sessions

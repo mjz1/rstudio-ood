@@ -76,13 +76,26 @@
   # time. run_r (the execute tool) and pkg (R CMD check/test/coverage/document/
   # load_all -- R package dev, with no coding-agent equivalent) are appended
   # only in execute mode: pkg's check/test SOURCE AND RUN the package's own
-  # code, so they are execute-level, not read. run_r is additionally gated by
-  # btw behind BTW_RUN_R_ENABLED, exported below in execute mode only, so
-  # read-only really is read-only even if this list is overridden. Config/env
-  # can override the read set (RSTUDIO_MCP_TOOLS); scrubbed hard because it
-  # lands inside the wrapper heredoc.
+  # code, so they are execute-level, not read.
+  #
+  # The execute tools are FILTERED OUT of non-execute modes, not merely not
+  # added. Config/env can override this list (RSTUDIO_MCP_TOOLS), and btw's
+  # BTW_RUN_R_ENABLED is NOT the backstop it appears to be: it only gates the
+  # DEFAULT tool set -- btw_tools('run_r') sets match_mode = "explicit" and
+  # serves a working run_r with the env var unset (verified against btw
+  # 1.3.0). So a config line adding run_r to the read set would hand every
+  # read-only session an execute tool, and an UNGUARDED one (read mode ships
+  # no AST gate). Same lesson as RSTUDIO_DATA_HOME: an app-level premise a
+  # user-level setting can override is not a guarantee. Scrubbed hard because
+  # it lands inside the wrapper heredoc; empty (or scrubbed-to-empty) falls
+  # back to the default -- exporting "" would make btw_tools() serve its
+  # ENTIRE default set, files/git/web tools included.
   mcp_tools = setting.call('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo,ide')
                 .gsub(/[^A-Za-z0-9_,]/, '')
+  unless agent_access == 'execute'
+    mcp_tools = mcp_tools.split(',').reject { |t| %w[run_r pkg].include?(t) }.join(',')
+  end
+  mcp_tools = 'env,docs,sessioninfo,ide' if mcp_tools.split(',').reject(&:empty?).empty?
   mcp_tools = "#{mcp_tools},run_r,pkg" if agent_access == 'execute'
 -%>
 
@@ -202,6 +215,18 @@ echo "RStudio session slot: ${SESSION_SLOT}  (state in ${SLOT_DIR}/data; cache +
 # rsession.sh live in it). Captured before the `cd "${HOME}"` below -- the
 # rsession file logger writes here so its logs travel with the session.
 SESSION_DIR="${PWD}"
+<%- if agent_access == 'execute' -%>
+
+# An execute session MUST have its AST gate (mcp-guard.R, staged with the app's
+# template/). If it is missing, the .mcp.json command's file.exists() check
+# quietly skips the wrapping and serves an UNGUARDED run_r -- correct behaviour
+# for read mode and terminals outside a session, but in execute mode it means a
+# broken deploy, and silence is how that ships. Warn where it lands in
+# output.log; the .mcp.json command additionally stop()s on set-but-missing.
+if [ ! -r "${SESSION_DIR}/mcp-guard.R" ]; then
+  echo "WARNING: MCP guard missing at ${SESSION_DIR}/mcp-guard.R -- run_r will be UNGUARDED (broken deploy?)" >&2
+fi
+<%- end -%>
 
 # Generate an `rsession` wrapper script
 export RSESSION_WRAPPER_FILE="${PWD}/rsession.sh"
@@ -247,8 +272,7 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # console AND the Terminal pane -- inherit these: the site profile reads the
   # access mode to auto-register this session with mcptools, and an agent's
   # Rscript MCP server (spawned in the Terminal by claude/copilot) reads the
-  # tool list. In execute mode the wrapper also opens btw's own gate for its
-  # run_r tool -- naming run_r in the list is deliberately not enough upstream.
+  # tool list.
   export RSTUDIO_MCP_ACCESS="<%= agent_access %>"
   export RSTUDIO_MCP_TOOLS="<%= mcp_tools %>"
 <%- if agent_access == 'execute' -%>
@@ -268,6 +292,13 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # staging dir, so this path always matches the app that launched the session
   # (same reason bin/auth is referenced via \$PWD above).
   export RSTUDIO_MCP_GUARD="${SESSION_DIR}/mcp-guard.R"
+<%- else -%>
+  # An EXPLICIT false, not mere absence. btw's env var only gates its DEFAULT
+  # tool set; a tool list that names run_r (a config override could) would be
+  # served regardless (match_mode = "explicit", verified against btw 1.3.0).
+  # With the var set to false, btw refuses run_r however it was requested --
+  # this is the backstop the mode filter above cannot be alone.
+  export BTW_RUN_R_ENABLED="false"
 <%- end -%>
 <%- end -%>
 

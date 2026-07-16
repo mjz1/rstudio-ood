@@ -54,11 +54,18 @@ guard_btw_tools <- function(tools) {
     blocked <- list(
       readline       = "readline() waits for console input",
       readLines      = "readLines() on stdin waits for console input",
-      scan           = "scan() reads from the console when no file= is given",
+      scan           = "scan() reads from the console when no file=/text= is given",
       menu           = "menu() waits for a console selection",
       select.list    = "select.list() waits for a selection",
+      askYesNo       = "askYesNo() waits for a console answer",
       browser        = "browser() drops into the debugger and waits for input",
       recover        = "recover() waits for a frame selection",
+      file.choose    = "file.choose() opens a modal file dialog",
+      edit           = "edit() opens a blocking editor",
+      fix            = "fix() opens a blocking editor",
+      locator        = "locator() waits for clicks on the plot",
+      identify       = "identify() waits for clicks on the plot",
+      getPass        = "getPass::getPass() waits for masked input",
       showQuestion   = "rstudioapi::showQuestion() opens a modal dialog",
       showPrompt     = "rstudioapi::showPrompt() opens a modal dialog",
       askForPassword = "rstudioapi::askForPassword() opens a modal dialog",
@@ -67,16 +74,60 @@ guard_btw_tools <- function(tools) {
       selectDirectory = "rstudioapi::selectDirectory() opens a modal file chooser"
     )
 
+    # Pick an argument from an unevaluated call by EXACT name, else (when pos
+    # is given) by position among the unnamed args. as.list(expr)$name would
+    # partial-match (args$file happily returns fileEncoding=), which misread
+    # scan() once. Returns NULL when the argument is absent.
+    call_arg <- function(expr, name, pos = NULL) {
+      args <- as.list(expr)[-1]
+      nms <- names(args)
+      if (is.null(nms)) nms <- rep("", length(args))
+      i <- which(nms == name)
+      if (length(i)) return(args[[i[[1]]]])
+      if (!is.null(pos)) {
+        unnamed <- which(nms == "")
+        if (length(unnamed) >= pos) return(args[[unnamed[[pos]]]])
+      }
+      NULL
+    }
+
+    # TRUE when an argument expression means "the console": absent (the
+    # default con=stdin() / file="" reads it), the literal "stdin", a call to
+    # stdin(), or file("stdin").
+    is_console_source <- function(arg) {
+      if (is.null(arg)) return(TRUE)
+      if (is.character(arg)) return(identical(arg, "stdin") || identical(arg, ""))
+      if (is.call(arg) && is.name(arg[[1]])) {
+        fn <- as.character(arg[[1]])
+        if (identical(fn, "stdin")) return(TRUE)
+        if (identical(fn, "file")) {
+          desc <- call_arg(arg, "description", 1L)
+          return(is.null(desc) || identical(desc, "stdin") || identical(desc, ""))
+        }
+      }
+      FALSE
+    }
+
     # Walk the AST for CALLS to blocked functions. Parsing (not grepping) is
     # what keeps false positives out: comments vanish, string literals are not
     # calls, and grepl("menu", x) passes because `menu` there is data.
-    # readLines() is only a hazard on stdin, so it is judged on its argument.
+    # readLines()/scan() are only hazards on the console, so they are judged
+    # on their arguments -- and judged CONSERVATIVELY in opposite directions:
+    # readLines blocks only when the connection is recognisably the console
+    # (its named source), while scan passes whenever file=/text= is supplied
+    # AS ANYTHING (a variable or call cannot be resolved statically, and
+    # refusing every scan(fname) would make the tool useless for real work).
     find_blocked <- function(expr, found = character()) {
       if (is.call(expr)) {
         fn <- expr[[1]]
-        # bare f(), pkg::f() and pkg:::f() all reduce to the same leaf name
+        # bare f(), pkg::f() and pkg:::f() all reduce to the same leaf name.
+        # fn[[1]] must be tested with is.name BEFORE as.character: in
+        # pkg::f(a, b)(x) the function position is itself a 3-long call whose
+        # own head is a call, and as.character() on that returns a length-3
+        # vector that && rejects with a coercion error (R >= 4.3).
         if (is.call(fn) &&
             length(fn) == 3L &&
+            is.name(fn[[1]]) &&
             as.character(fn[[1]]) %in% c("::", ":::")) {
           fn <- fn[[3]]
         }
@@ -85,16 +136,14 @@ guard_btw_tools <- function(tools) {
           if (nm %in% names(blocked)) {
             hazard <- TRUE
             if (identical(nm, "readLines")) {
-              # only stdin blocks; readLines("file.txt") is fine
-              args <- as.list(expr)[-1]
-              con <- if (!is.null(args$con)) args$con else if (length(args)) args[[1]] else ""
-              hazard <- is.character(con) && identical(con, "stdin")
+              hazard <- is_console_source(call_arg(expr, "con", 1L))
             }
             if (identical(nm, "scan")) {
-              # scan(file="x") reads a file; bare scan() reads the console
-              args <- as.list(expr)[-1]
-              file <- if (!is.null(args$file)) args$file else if (length(args)) args[[1]] else ""
-              hazard <- !(is.character(file) && nzchar(file))
+              file <- call_arg(expr, "file", 1L)
+              text <- call_arg(expr, "text")   # 21st formal: named-only
+              file_is_console <- is.null(file) ||
+                (is.character(file) && !nzchar(file))
+              hazard <- file_is_console && is.null(text)
             }
             if (hazard) found <- c(found, nm)
           }

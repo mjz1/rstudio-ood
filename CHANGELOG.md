@@ -39,10 +39,20 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   execute-mode sessions disarm the prompts that fire from inside package code
   (`devtools`/`renv` install prompts, `askYesNo`), and the MCP server screens
   submitted code before it reaches the session, refusing `readline`, `scan`,
-  `menu`, `browser`, `readLines("stdin")` and the interactive `rstudioapi`
-  dialogs with an explanatory error. The screen parses rather than greps, so
-  mentions in comments and strings pass; it wraps the tool itself, so it
-  protects every MCP client rather than one vendor's. (#2)
+  `menu`, `browser`, `readLines()` on stdin, `file.choose`, `edit`, `locator`
+  and the interactive `rstudioapi` dialogs with an explanatory error. The
+  screen parses rather than greps, so mentions in comments and strings pass;
+  it wraps the tool itself, so it protects every client of this server rather
+  than one vendor's. A `.mcp.json` written before the guard existed is
+  detected by `rstudio_mcp_init`, which prints the replacement entry. (#2)
+
+- **Read-only sessions are read-only twice over.** btw's `BTW_RUN_R_ENABLED`
+  only gates its *default* tool set — a tool list that explicitly names
+  `run_r` (as a config override could) is served with the variable unset. A
+  read session now filters the execute tools out of the served list whatever
+  the override says *and* exports `BTW_RUN_R_ENABLED=false` explicitly. A
+  tool list that is set-but-empty falls back to the read default instead of
+  btw's entire default set (which includes file-write and web tools). (#2)
 
 - Docs: why `install.packages()` can claim a package "is not available" that
   exists on CRAN — every image's mirror is a dated Posit Package Manager

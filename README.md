@@ -177,8 +177,10 @@ claude                      # or your agent, run from the project in the Termina
 The agent gets tools with **no equivalent in its own toolbox**: list the objects
 you have loaded, describe an in-memory data frame, read R help and vignettes for
 installed packages, and see the file open in the editor. **Read + execute** adds
-`run_r` (the agent runs R *in your session*, against your loaded state, asking
-approval each call) and the R-package-development tools (`R CMD check`, tests,
+`run_r` (the agent runs R *in your session*, against your loaded state — with
+clients like Claude Code asking your approval on each call; that per-call
+consent is the *client's* behaviour, so an auto-approving client skips it)
+and the R-package-development tools (`R CMD check`, tests,
 coverage, roxygen docs, `load_all`) — so an agent can build a notebook chunk by
 chunk, or iterate on a package, without re-rendering to find each bug. It
 deliberately does **not** serve files/git/web tools: your agent already has
@@ -206,18 +208,24 @@ and the agent's console is not one you can type into, so a submitted call that
 asks a question — `devtools`/`renv` "install? [Y/n]", `askYesNo()`, `menu()` —
 would block the R thread on a prompt no one can answer, and because that thread
 also drives the tool-call event loop, the *whole session* deadlocks: every later
-call times out and never recovers (the 120 s timeout is on the server side and
-cannot un-wedge the session). Execute-mode sessions therefore turn the common
-prompts (`needs.promptUser`, `renv.consent`, `askYesNo`) into an immediate
-**error** rather than a hang, which the agent sees as a normal tool error. Those options catch the prompts that fire from *inside* package code, which no
-code inspection could see. The **direct** calls an agent might write are caught
-earlier, at the door: the MCP server wraps `run_r` so submitted code is parsed
-and screened **before** it reaches the session, and anything that waits for
-console or UI input — `readline`, `scan`, `menu`, `browser`, `readLines("stdin")`,
+call times out, and no machine can un-wedge it (the 120 s timeout is on the
+server side and only gives up waiting — recovery below). Execute-mode sessions
+therefore turn the common prompts (`needs.promptUser`, `renv.consent`,
+`askYesNo`) into an immediate **error** rather than a hang, which the agent
+sees as a normal tool error. Those options catch the prompts that fire from
+*inside* package code, which no code inspection could see. The **direct** calls
+an agent might write are caught earlier, at the door: the MCP server wraps
+`run_r` so submitted code is parsed and screened **before** it reaches the
+session, and anything that waits for console or UI input — `readline`, `scan`,
+`menu`, `browser`, `readLines()` on stdin, `file.choose`,
 `rstudioapi::showQuestion` and friends — comes back as an explanatory error
 instead of a deadlock. It parses rather than greps, so `# readline() here`, the
 string `"readline"`, and `readLines("data.txt")` all pass untouched. The guard
-travels with the tool, so it protects **any** MCP client, not just Claude Code.
+travels with the tool, so every client of this server gets it, whichever agent
+connects — but only of *this* server: a hand-rolled `mcptools::mcp_server()`
+or a `.mcp.json` written before the guard existed serves `run_r` bare
+(re-run `rstudio_mcp_init` — it detects a pre-guard file and prints the
+replacement entry).
 
 Neither layer can see through indirection (`do.call`, `eval(parse())`) or into a
 `source()`d file, so prefer non-interactive calls (`library()` or
@@ -239,10 +247,15 @@ session all run **on the compute node** over node-local sockets — your browser
 is only a viewer. Close the tab or sleep the machine and the work continues; on
 reconnect, the Terminal may need a **Ctrl+L** to redraw the agent's UI. It ends
 only when the job's walltime expires or you quit the session. Which tools are
-served is controlled per-launch by the form (via `RSTUDIO_MCP_TOOLS`), so the
-`.mcp.json` never needs editing; a read-only session never exposes `run_r`.
-Need a lab-specific capability btw lacks? Add an `ellmer::tool()` of your own to
-the server command — `mcptools` serves any ellmer tool, not just btw's.
+served is controlled per-launch by the form (via `RSTUDIO_MCP_TOOLS`, with the
+guard's location in `RSTUDIO_MCP_GUARD`), so the `.mcp.json` never needs
+editing. A read-only session never exposes `run_r`, enforced twice: the
+execute tools are filtered out of the served list whatever a config override
+says, and `BTW_RUN_R_ENABLED=false` is exported explicitly — btw serves an
+explicitly named `run_r` when the variable is merely absent, so absence is not
+safety. Need a lab-specific capability btw lacks? Add an `ellmer::tool()` of
+your own to the server command — `mcptools` serves any ellmer tool, not just
+btw's.
 
 **Shell wrappers.** The same images and libraries from a terminal:
 
