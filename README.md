@@ -214,15 +214,18 @@ only covers the hookable prompts — a bare `readline()`/`scan()`/`menu()`,
 `browser()`, or an `rstudioapi` dialog (`showQuestion`, `showPrompt`,
 `selectFile`, `askForPassword`) in submitted code still blocks, so prefer
 non-interactive calls (`library()` or `pkgload::load_all(attach = FALSE)` over
-`devtools::load_all()`). If a session does wedge, **Esc in the console
-recovers it** (verified live): the blocked read is interrupted, the session
-returns to top level, and every tool call queued behind it drains — an
-`rstudioapi` dialog can alternatively be answered by clicking it. Either way a
-human must be at the console; the MCP transport carries code in and output
-out, and can neither answer a prompt nor interrupt one, so an unattended run
-stalls at the wedge until someone comes back (nothing is lost — it resumes on
-the keypress). The real fix (per-call timeout and cancellation) belongs
-upstream in `mcptools`/`btw`.
+`devtools::load_all()`). If a session does wedge, **a human at the console
+recovers it** (verified live): **Esc** interrupts a blocked `readline()` or
+dialog, **clicking** answers an `rstudioapi` modal, and **`Q`** exits a
+`browser()` wedge — the debugger prompt works normally throughout. There is
+no machine path: the MCP transport carries code in and output out, and can
+neither answer a prompt nor interrupt one, so an unattended run stalls at the
+wedge until someone comes back. While it waits, **leave the session alone** —
+probing a wedged session with further tool calls is not a free read: the
+queued callbacks can error during recovery and corrupt console input, so a
+call that times out should be treated as possibly lost, and diagnostics saved
+for after the human has cleared the console. The real fix (per-call timeout
+and cancellation) belongs upstream in `mcptools`/`btw`.
 
 Why this survives you closing the laptop: the agent, its MCP server and the R
 session all run **on the compute node** over node-local sockets — your browser
