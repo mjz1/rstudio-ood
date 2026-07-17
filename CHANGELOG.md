@@ -56,6 +56,18 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ### Fixed
 
+- **Session reachability no longer hangs on an unset default.** rserver's
+  `--www-address` was never passed, so every session was reachable from the
+  OnDemand web node only because the default happens to bind all
+  interfaces — a default Posit could move in any release, and the failure
+  would be invisible: rserver starts "healthy", the port opens locally, and
+  no browser can connect. `script.sh.erb` now pins `--www-address=0.0.0.0`,
+  the sync canary passes the same flag, and the canary polls the node's
+  network address rather than loopback — a loopback poll would vouch for an
+  rserver no browser could reach. (Found while debugging the image repo's
+  new launch smoke test against 2026.07.0; the wedge there turned out to be
+  CI's docker port mapping, not RStudio, but the exposure it pointed at is
+  real.)
 - RStudio's internal log records no longer print into the R console. The
   session process forwards its own stderr to the console, and the app's
   logging override — needed so *server* startup failures reach `output.log` —

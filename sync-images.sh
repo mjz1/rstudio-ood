@@ -183,6 +183,14 @@ smoke_launch() { # smoke_launch <sif>
     # An OS-assigned free port; python3 is already a dependency of this script.
     port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
 
+    # Poll the node's NETWORK address, not loopback: the OnDemand web node
+    # connects across the network, so that is the reachability that matters.
+    # A loopback poll would vouch for an rserver no browser could reach --
+    # e.g. one whose bind address regressed to loopback-only.
+    local addr
+    addr=$(hostname -I 2>/dev/null | awk '{print $1}')
+    addr=${addr:-127.0.0.1}
+
     "$SINGULARITY" exec \
         -B "$work/tmp:/tmp" \
         -B "$work/run:/run" \
@@ -192,6 +200,7 @@ smoke_launch() { # smoke_launch <sif>
         "$sif" rserver \
         --database-config-file=/tmp/database.conf \
         --server-user="$USER" \
+        --www-address=0.0.0.0 \
         --www-port="$port" \
         --auth-none=0 \
         --auth-pam-require-password-prompt=0 \
@@ -204,7 +213,7 @@ smoke_launch() { # smoke_launch <sif>
 
     # A healthy rserver serves the page in seconds; 120 covers a busy node.
     local deadline=$((SECONDS + 120))
-    until curl -fsS -o "$work/signin.html" "http://127.0.0.1:${port}/auth-sign-in" 2>/dev/null; do
+    until curl -fsS -o "$work/signin.html" "http://${addr}:${port}/auth-sign-in" 2>/dev/null; do
         if ! kill -0 "$pid" 2>/dev/null; then
             log "    canary: rserver exited before serving the sign-in page"
             ok=0; break
