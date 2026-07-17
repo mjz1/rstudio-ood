@@ -17,6 +17,18 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ### Added
 
+- `sync-images.sh` now test-launches a freshly pulled image before promoting
+  it. On the pulling compute node, rserver is started under singularity with
+  the same flag set `script.sh.erb` uses and must serve its sign-in page;
+  a candidate that fails leaves the current image live for the whole lab,
+  with rserver's output in the sync log. The upstream images are rolling and
+  Posit changes rserver options between releases (2026.07.0 deprecated
+  `--test-config` and added path validation for `database-config-file`,
+  which the app passes) — previously the first sign of an incompatible image
+  was a user's session timing out at `wait_until_port_used`.
+  `RSTUDIO_SYNC_SMOKE=0` skips the canary. `test/run.sh` gains a parity
+  check that fails if the canary's rserver flags drift from
+  `script.sh.erb`'s.
 - Docs: why `install.packages()` can claim a package "is not available" that
   exists on CRAN — every image's mirror is a dated Posit Package Manager
   snapshot, permanently so for older R versions (rocker policy). The new
