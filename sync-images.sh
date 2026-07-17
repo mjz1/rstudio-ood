@@ -186,11 +186,25 @@ smoke_launch() { # smoke_launch <sif>
     # Poll the node's NETWORK address, not loopback: the OnDemand web node
     # connects across the network, so that is the reachability that matters.
     # A loopback poll would vouch for an rserver no browser could reach --
-    # e.g. one whose bind address regressed to loopback-only.
+    # e.g. one whose bind address regressed to loopback-only. First IPv4
+    # specifically (hostname -I can lead with IPv6, malformed in a URL
+    # without brackets); if the fallback to loopback fires, say so, because
+    # it silently gives up exactly the coverage described above.
     local addr
-    addr=$(hostname -I 2>/dev/null | awk '{print $1}')
-    addr=${addr:-127.0.0.1}
+    addr=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
+    if [[ -z $addr ]]; then
+        log "    canary: no IPv4 from hostname -I; polling loopback (bind-address coverage lost)"
+        addr=127.0.0.1
+    fi
 
+    # Note the deliberate nesting: $work usually lives under host /tmp, so
+    # the "$work:$work" self-bind (which makes the auth/rsession stubs
+    # reachable at their host paths) lands INSIDE the fresh "$work/tmp:/tmp"
+    # mount. That requires singularity to create the mountpoint in the
+    # just-mounted /tmp -- fine with overlay/underlay (verified live, jobs
+    # 2200956/2201352), and if a site config ever rejects it the canary
+    # fails CLOSED with singularity's bind error in the log,
+    # RSTUDIO_SYNC_SMOKE=0 being the escape hatch.
     "$SINGULARITY" exec \
         -B "$work/tmp:/tmp" \
         -B "$work/run:/run" \
@@ -269,11 +283,20 @@ pull_one() { # pull_one <ver> <digest> <repo-ref>
         || die "R $ver: image reports R $r_full; refusing to install (digest $digest)"
 
     # Promote only an image that actually launches. On failure the current
-    # image stays live for the whole lab and the candidate is kept for
-    # inspection -- same convention as the R-version guard above.
+    # image stays live for the whole lab, and pull_one RETURNS rather than
+    # dies so the remaining versions still sync (the caller collects the
+    # failures). The candidate is renamed out of the EXIT trap's
+    # *.partial.sif cleanup glob first -- a `die` here used to promise
+    # "candidate kept at ..." while the trap deleted it on exit, sending
+    # the maintainer to inspect a file that no longer existed.
     if [[ ${RSTUDIO_SYNC_SMOKE:-1} != 0 ]]; then
         log "==> R $ver: launch canary (RSTUDIO_SYNC_SMOKE=0 skips)"
-        smoke_launch "$tmp" || die "R $ver: candidate failed the launch canary; current image stays live (candidate kept at $tmp)"
+        if ! smoke_launch "$tmp"; then
+            local rejected="${tmp%.partial.sif}.rejected.sif"
+            mv -f "$tmp" "$rejected"
+            log "    R $ver: candidate FAILED the launch canary; current image stays live (candidate kept at $rejected)"
+            return 1
+        fi
     fi
 
     # Retain the outgoing build as a hardlink, then swap the name atomically.
@@ -403,14 +426,21 @@ check() {
 }
 
 sync_local() {
-    local ver
+    local ver failed=""
     exec 9>"$IMAGE_DIR/.sync.lock"
     flock -n 9 || die "another sync holds $IMAGE_DIR/.sync.lock"
+    # One canary-rejected version must not abandon the rest: pull_one returns
+    # nonzero on a rejection (its hard `die`s still abort everything), the
+    # loop continues, and the symlink + manifest are rebuilt for whatever DID
+    # promote -- images.json must describe what is actually on disk. The
+    # final die keeps the job loudly red.
     for ver in "$@"; do
-        pull_one "$ver" "${REMOTE_DIGEST[$ver]}" "${REMOTE_REF[$ver]}"
+        pull_one "$ver" "${REMOTE_DIGEST[$ver]}" "${REMOTE_REF[$ver]}" \
+            || failed="${failed:+$failed }$ver"
     done
     update_latest_symlink
     rebuild_manifest
+    [[ -z $failed ]] || die "canary-rejected, NOT installed: $failed (candidates kept as .rstudio-<ver>.*.rejected.sif in $IMAGE_DIR; delete them once inspected)"
 }
 
 SYNC_JID=""

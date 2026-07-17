@@ -111,7 +111,16 @@ fi
 echo
 echo 'sync canary flag parity'
 _rserver_flags() { # _rserver_flags <file>
-    sed -n '/ rserver \\$/,/--rsession-path/p' "$1" | grep -oE '\-\-[a-z][a-z0-9-]+' | sort -u
+    # Flag name PLUS value when the value is a bare literal: literal values
+    # must agree across the two files (--www-address=0.0.0.0 -- the value is
+    # the whole point), while values that are legitimately local (paths,
+    # ports, users) are always quoted/expanded, start with a quote or $, and
+    # reduce to the bare flag name. The trailing `|| true` matters: with no
+    # match, grep's nonzero + pipefail would abort the whole test script at
+    # the assignment, swallowing the FAIL diagnostic below -- the [ -n ]
+    # guard reports the empty set instead.
+    sed -n '/ rserver \\$/,/--rsession-path/p' "$1" \
+        | grep -oE '\-\-[a-z][a-z0-9-]+(=[^"$ \\]+)?' | sort -u || true
 }
 app_flags="$(_rserver_flags "$APP/template/script.sh.erb")"
 canary_flags="$(_rserver_flags "$APP/sync-images.sh")"
