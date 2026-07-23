@@ -313,10 +313,23 @@ interchangeable. Consequently:
 `sync-images.sh` records the registry manifest digest of each `.sif` in a
 `.digest` sidecar, so staleness is detected with HTTP HEAD requests rather than a
 multi-GB download. The upstream repo (`mjz1/rstudio-img`) rebuilds its rolling
-`4.3`–`4.6` tags monthly, so **an image can change under a stable filename**.
+`4.3`–`4.6` tags monthly — plus within a week of any new stable RStudio
+Server release (gated weekly cron) — so **an image can change under a stable
+filename**, and the RStudio Server inside it can jump versions.
 
 - The previous build is retained as `rstudio-<ver>.sif.prev` (a hardlink, so it
   costs nothing until the new image lands). Rollback is a rename.
+- **A pulled image must pass a launch canary before it replaces the live one**
+  (`smoke_launch` in sync-images.sh): rserver starts under singularity on the
+  pulling node with script.sh.erb's exact flag set and must serve its sign-in
+  page. rserver dies on an unknown option, so a Posit release that drops a
+  flag the app passes fails in the sync log instead of as a user's session
+  stuck at `wait_until_port_used`. The flag list is a deliberate second copy
+  of script.sh.erb's; `test/run.sh` diffs the two and fails on drift.
+  `RSTUDIO_SYNC_SMOKE=0` is the escape hatch when the canary itself is the
+  thing that is wrong. Upstream also smoke-tests every publish under docker
+  (including the same flag set), but only this canary exercises singularity
+  and this cluster's environment.
 - `images.json` records digest, R/RStudio/Quarto versions and pull time for every
   image, so you can reconstruct what an analysis ran under.
 - What actually moves between rebuilds is *not* mostly R. One rebuild took

@@ -561,6 +561,13 @@ done
 # then fails; Quarto (Deno) dies with "Failed to load platform certificates".
 # Point them at the container's own CA bundle rather than using --cleanenv,
 # which would also strip SLURM_* and the RStudio variables we rely on.
+#
+# --www-address is pinned to 0.0.0.0 because the OnDemand web node reaches
+# this rserver ACROSS THE NETWORK. Sessions have only ever worked because
+# the unset default happens to bind all interfaces -- reachability from the
+# browser hung on a default Posit could move in any release, invisibly,
+# because rserver would still start "healthy". The flag that decides network
+# reachability does not get left to a default.
 <%= singularity %> exec ${NV_FLAG} -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/run:/run" \
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
@@ -575,6 +582,7 @@ done
  "<%= image %>" rserver \
  --database-config-file=/tmp/database.conf \
  --server-user="${RSTUDIO_USER}" \
+ --www-address=0.0.0.0 \
  --www-port="${port}" \
  --auth-none=0 \
  --auth-pam-require-password-prompt=0 \

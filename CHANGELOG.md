@@ -71,6 +71,23 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   tool list that is set-but-empty falls back to the read default instead of
   btw's entire default set (which includes file-write and web tools). (#2)
 
+- `sync-images.sh` now test-launches a freshly pulled image before promoting
+  it. On the pulling compute node, rserver is started under singularity with
+  the same flag set `script.sh.erb` uses and must serve its sign-in page from
+  the node's network address; a candidate that fails leaves the current image
+  live for the whole lab, with rserver's output in the sync log and the
+  rejected candidate kept (as `.rejected.sif`) for inspection — while the
+  remaining versions still sync and the manifest still describes what is on
+  disk. The upstream images are rolling and Posit changes rserver options
+  between releases (2026.07.0 deprecated `--test-config` and added path
+  validation for `database-config-file`, which the app passes) — previously
+  the first sign of an incompatible image was a user's session timing out at
+  `wait_until_port_used`. `RSTUDIO_SYNC_SMOKE=0` skips the canary.
+  `test/run.sh` gains a parity check that fails if the canary's rserver
+  flags drift from `script.sh.erb`'s — flag names, plus values for the
+  flags whose values are literals (`--www-address=0.0.0.0` being the one
+  that matters).
+
 - Docs: why `install.packages()` can claim a package "is not available" that
   exists on CRAN — every image's mirror is a dated Posit Package Manager
   snapshot, permanently so for older R versions (rocker policy). The new
@@ -98,6 +115,19 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ### Fixed
 
+- **Session reachability no longer hangs on an unset default.** rserver's
+  `--www-address` was never passed, so every session was reachable from the
+  OnDemand web node only because the default happens to bind all
+  interfaces — a default Posit could move in any release, and the failure
+  would be invisible: rserver starts "healthy", the port opens locally, and
+  no browser can connect. `script.sh.erb` now pins `--www-address=0.0.0.0`,
+  the sync canary passes the same flag, and the canary polls the node's
+  network address rather than loopback — a loopback poll would vouch for an
+  rserver no browser could reach. (Found while debugging the image repo's
+  new launch smoke test against 2026.07.0; the wedge there turned out to be
+  the test harness itself — curl silently failing to write its output into
+  a directory the test had chowned away, not RStudio and not networking —
+  but the exposure it pointed at is real.)
 - RStudio's internal log records no longer print into the R console. The
   session process forwards its own stderr to the console, and the app's
   logging override — needed so *server* startup failures reach `output.log` —

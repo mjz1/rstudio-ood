@@ -107,4 +107,35 @@ for s in "$OUT"/script*.sh; do
     fi
 done
 
+# --- the sync canary must launch rserver the way the app does -------------------
+#
+# sync-images.sh test-launches a freshly pulled image before promoting it, with
+# an rserver invocation that MIRRORS script.sh.erb's. Two copies drift: a flag
+# added to one and not the other makes the canary vouch for a launch the app
+# does not perform (or vice versa). Pin them together by extracting the flag
+# names from each rserver block and diffing.
+echo
+echo 'sync canary flag parity'
+_rserver_flags() { # _rserver_flags <file>
+    # Flag name PLUS value when the value is a bare literal: literal values
+    # must agree across the two files (--www-address=0.0.0.0 -- the value is
+    # the whole point), while values that are legitimately local (paths,
+    # ports, users) are always quoted/expanded, start with a quote or $, and
+    # reduce to the bare flag name. The trailing `|| true` matters: with no
+    # match, grep's nonzero + pipefail would abort the whole test script at
+    # the assignment, swallowing the FAIL diagnostic below -- the [ -n ]
+    # guard reports the empty set instead.
+    sed -n '/ rserver \\$/,/--rsession-path/p' "$1" \
+        | grep -oE '\-\-[a-z][a-z0-9-]+(=[^"$ \\]+)?' | sort -u || true
+}
+app_flags="$(_rserver_flags "$APP/template/script.sh.erb")"
+canary_flags="$(_rserver_flags "$APP/sync-images.sh")"
+if [ -n "$app_flags" ] && [ "$app_flags" = "$canary_flags" ]; then
+    echo '  ok   sync-images.sh canary passes the same rserver flags as script.sh.erb'
+else
+    echo '  FAIL rserver flag drift between script.sh.erb (<) and sync-images.sh (>):'
+    diff <(printf '%s\n' "$app_flags") <(printf '%s\n' "$canary_flags") | sed 's/^/       /' || true
+    rc=1
+fi
+
 exit $rc

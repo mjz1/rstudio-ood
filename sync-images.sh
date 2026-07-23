@@ -20,6 +20,12 @@
 # `rstudio-<ver>.sif.prev` (a hardlink, so it costs no extra disk until the new
 # image lands). Rollback is therefore a rename, not a re-pull.
 #
+# A freshly pulled image must pass a launch canary before it replaces the live
+# one: rserver is started under singularity on the pulling node with the same
+# flag set script.sh.erb uses, and must serve its sign-in page. A candidate
+# that fails leaves the current image untouched. RSTUDIO_SYNC_SMOKE=0 skips
+# the canary (see smoke_launch below).
+#
 # Configuration comes from ~/.config/rstudio_dev/config (written by install.sh);
 # the environment overrides it. The keys that matter here:
 #
@@ -135,6 +141,122 @@ open(out, "a").write("\n")
 PY
 }
 
+# --- launch canary ------------------------------------------------------------
+
+# A pulled image is not installed until rserver, started the way script.sh.erb
+# starts it, serves its sign-in page from THIS node under singularity -- the
+# real runtime, which no registry-side CI can exercise. The upstream repo's CI
+# smoke-tests every publish under docker, but singularity is where the host
+# environment leaks in and where rootless is not optional. rserver refuses to
+# start on an unknown option, so an RStudio release that drops a flag the app
+# passes fails HERE, in the sync job's log -- not as a user's session whose
+# only symptom is "wait_until_port_used timed out".
+#
+# THE FLAG LIST MIRRORS script.sh.erb's rserver invocation; test/run.sh fails
+# if the two drift. Only runs where pulls run (the sbatch job or --local, both
+# on a compute allocation), so it never puts compute on a login node.
+#
+# RSTUDIO_SYNC_SMOKE=0 skips it -- the escape hatch for when the canary itself
+# is wrong and a pull must not be blocked.
+smoke_launch() { # smoke_launch <sif>
+    local sif="$1"
+    local work port pid ok=1
+    work=$(mktemp -d "${TMPDIR:-/tmp}/rstudio-canary.XXXXXX")
+    mkdir -p "$work/tmp" "$work/run" "$work/lib"
+
+    # The same database.conf script.sh.erb writes (the deb's copy is 0600
+    # root:root, fatal under rootless singularity on RStudio >= 2026.06).
+    printf 'provider=sqlite\ndirectory=/var/lib/rstudio-server\n' > "$work/tmp/database.conf"
+    chmod 600 "$work/tmp/database.conf"
+
+    # rserver to stderr so a startup failure lands in this sync job's log --
+    # the same reason script.sh.erb binds its own logging.conf.
+    printf '[*]\nlog-level=warn\nlogger-type=stderr\n' > "$work/logging.conf"
+
+    # Stubs of the app's PAM helper and rsession wrapper: the flags need a
+    # valid executable (2026.07+ validates configured paths), not the real
+    # per-session ceremony. The sign-in page never invokes either.
+    printf '#!/usr/bin/env bash\nread -rs P\n[ "$P" = "$RSTUDIO_PASSWORD" ]\n' > "$work/auth"
+    printf '#!/usr/bin/env bash\nexec /usr/lib/rstudio-server/bin/rsession "$@"\n' > "$work/rsession.sh"
+    chmod 700 "$work/auth" "$work/rsession.sh"
+
+    # An OS-assigned free port; python3 is already a dependency of this script.
+    port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+
+    # Poll the node's NETWORK address, not loopback: the OnDemand web node
+    # connects across the network, so that is the reachability that matters.
+    # A loopback poll would vouch for an rserver no browser could reach --
+    # e.g. one whose bind address regressed to loopback-only. First IPv4
+    # specifically (hostname -I can lead with IPv6, malformed in a URL
+    # without brackets); if the fallback to loopback fires, say so, because
+    # it silently gives up exactly the coverage described above.
+    local addr
+    addr=$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' || true)
+    if [[ -z $addr ]]; then
+        log "    canary: no IPv4 from hostname -I; polling loopback (bind-address coverage lost)"
+        addr=127.0.0.1
+    fi
+
+    # Note the deliberate nesting: $work usually lives under host /tmp, so
+    # the "$work:$work" self-bind (which makes the auth/rsession stubs
+    # reachable at their host paths) lands INSIDE the fresh "$work/tmp:/tmp"
+    # mount. That requires singularity to create the mountpoint in the
+    # just-mounted /tmp -- fine with overlay/underlay (verified live, jobs
+    # 2200956/2201352), and if a site config ever rejects it the canary
+    # fails CLOSED with singularity's bind error in the log,
+    # RSTUDIO_SYNC_SMOKE=0 being the escape hatch.
+    "$SINGULARITY" exec \
+        -B "$work/tmp:/tmp" \
+        -B "$work/run:/run" \
+        -B "$work/lib:/var/lib/rstudio-server" \
+        -B "$work/logging.conf:/etc/rstudio/logging.conf" \
+        -B "$work:$work" \
+        "$sif" rserver \
+        --database-config-file=/tmp/database.conf \
+        --server-user="$USER" \
+        --www-address=0.0.0.0 \
+        --www-port="$port" \
+        --auth-none=0 \
+        --auth-pam-require-password-prompt=0 \
+        --auth-pam-helper-path="$work/auth" \
+        --auth-encrypt-password=0 \
+        --auth-timeout-minutes=10080 \
+        --rsession-path="$work/rsession.sh" \
+        > "$work/rserver.log" 2>&1 &
+    pid=$!
+
+    # A healthy rserver serves the page in seconds; 120 covers a busy node.
+    local deadline=$((SECONDS + 120))
+    until curl -fsS -o "$work/signin.html" "http://${addr}:${port}/auth-sign-in" 2>/dev/null; do
+        if ! kill -0 "$pid" 2>/dev/null; then
+            log "    canary: rserver exited before serving the sign-in page"
+            ok=0; break
+        fi
+        if (( SECONDS >= deadline )); then
+            log "    canary: rserver never served /auth-sign-in within 120s"
+            ok=0; break
+        fi
+        sleep 2
+    done
+
+    if (( ok )) && ! grep -qi rstudio "$work/signin.html" 2>/dev/null; then
+        log "    canary: /auth-sign-in answered but is not an RStudio sign-in page"
+        ok=0
+    fi
+
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+
+    if (( ok )); then
+        log "    canary: rserver served the sign-in page with the app's flag set"
+    else
+        log "    canary: rserver output follows"
+        sed 's/^/    | /' "$work/rserver.log" >&2 || true
+    fi
+    rm -rf "$work"
+    (( ok ))
+}
+
 # --- pulling ------------------------------------------------------------------
 
 pull_one() { # pull_one <ver> <digest> <repo-ref>
@@ -159,6 +281,23 @@ pull_one() { # pull_one <ver> <digest> <repo-ref>
     # exact class of mistake that let rstudio-v2.0.sif silently mean R 4.4.1.
     [[ $r_full == ${ver}.* || $r_full == "$ver" ]] \
         || die "R $ver: image reports R $r_full; refusing to install (digest $digest)"
+
+    # Promote only an image that actually launches. On failure the current
+    # image stays live for the whole lab, and pull_one RETURNS rather than
+    # dies so the remaining versions still sync (the caller collects the
+    # failures). The candidate is renamed out of the EXIT trap's
+    # *.partial.sif cleanup glob first -- a `die` here used to promise
+    # "candidate kept at ..." while the trap deleted it on exit, sending
+    # the maintainer to inspect a file that no longer existed.
+    if [[ ${RSTUDIO_SYNC_SMOKE:-1} != 0 ]]; then
+        log "==> R $ver: launch canary (RSTUDIO_SYNC_SMOKE=0 skips)"
+        if ! smoke_launch "$tmp"; then
+            local rejected="${tmp%.partial.sif}.rejected.sif"
+            mv -f "$tmp" "$rejected"
+            log "    R $ver: candidate FAILED the launch canary; current image stays live (candidate kept at $rejected)"
+            return 1
+        fi
+    fi
 
     # Retain the outgoing build as a hardlink, then swap the name atomically.
     # There is no window in which rstudio-<ver>.sif does not resolve, so an
@@ -287,14 +426,21 @@ check() {
 }
 
 sync_local() {
-    local ver
+    local ver failed=""
     exec 9>"$IMAGE_DIR/.sync.lock"
     flock -n 9 || die "another sync holds $IMAGE_DIR/.sync.lock"
+    # One canary-rejected version must not abandon the rest: pull_one returns
+    # nonzero on a rejection (its hard `die`s still abort everything), the
+    # loop continues, and the symlink + manifest are rebuilt for whatever DID
+    # promote -- images.json must describe what is actually on disk. The
+    # final die keeps the job loudly red.
     for ver in "$@"; do
-        pull_one "$ver" "${REMOTE_DIGEST[$ver]}" "${REMOTE_REF[$ver]}"
+        pull_one "$ver" "${REMOTE_DIGEST[$ver]}" "${REMOTE_REF[$ver]}" \
+            || failed="${failed:+$failed }$ver"
     done
     update_latest_symlink
     rebuild_manifest
+    [[ -z $failed ]] || die "canary-rejected, NOT installed: $failed (candidates kept as .rstudio-<ver>.*.rejected.sif in $IMAGE_DIR; delete them once inspected)"
 }
 
 SYNC_JID=""
