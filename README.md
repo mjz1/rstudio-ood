@@ -12,8 +12,9 @@ behave exactly as before, so trying it risks nothing.
   everything here is active only inside this app's sessions and wrappers
   ([the guarantee](docs/install.md#what-it-does-not-touch--the-coexistence-guarantee)).
   Uninstalling is deleting a config file and an app directory.
-- **Current R and RStudio** — images (R 4.3–4.6) rebuilt monthly upstream;
-  one command syncs them, and rollback to the previous build is a rename.
+- **Current R and RStudio** — images (R 4.3–4.6) rebuilt upstream monthly and
+  after each RStudio release; one command syncs them, a new image must pass a
+  launch test before it goes live, and rollback is a rename.
 - **Named concurrent sessions** — one per project, each resuming its own state;
   labelled in the form, in `squeue`, and on the session card.
 - **Lab-shared images** — one person maintains them, everyone else reads them;
@@ -129,41 +130,27 @@ build first, `torch::install_torch(reinstall = TRUE)` once. How `--nv`, `--gres`
 and the CUDA pick actually work: [docs/images.md](docs/images.md) and the
 comments in `template/script.sh.erb`.
 
-**AI assistance (Copilot / Posit Assistant).** The image enables two *separate*
-integrations, and they are not the same thing:
+**AI features.** Three separate integrations, easily confused — they differ in
+where the model runs and what it can see:
 
-- **GitHub Copilot** (`copilot-enabled=1`) — RStudio's built-in inline
-  completions, backed by the bundled `copilot-language-server`. Sign in under
-  **Tools → Global Options → Copilot** with your GitHub account. If your
-  institution provides Copilot (MSK does), **this needs no extra credentials
-  and no spend — verified working here** for inline completion.
-- **Posit Assistant** (`posit-assistant-enabled=1`) — the newer chat/agent pane.
-  It prompts to install, then reports *"unable to connect"*, because it is a
-  **hosted commercial service**: the backend talks to `gateway.posit.ai`
-  (running `claude-sonnet-4-5`) and needs credentials the image cannot supply.
-  Two routes exist:
-  - **Bring your own key** (0.7.7+): the backend reads `ANTHROPIC_API_KEY` and
-    persists settings in `~/.posit/assistant/settings.json` — under `$HOME`, so
-    a key set once applies to every session and slot. Set it in the pane's
-    settings, or in `~/.Renviron` (`chmod 600` it). Billed to *your* Anthropic
-    account.
-  - **Posit's AI service** — sign in from the pane; needs a Posit account with
-    Assistant access. Untested here, and OAuth callbacks through OnDemand's
-    `/rnode/…` proxy are a plausible snag.
+- **GitHub Copilot** — RStudio's built-in inline completions, enabled in the
+  image. Sign in under **Tools → Global Options → Copilot**. If your institution
+  provides Copilot (MSK does), this needs no extra credentials and no spend, and
+  it is **verified working here**.
+- **Posit Assistant** — the chat pane. It starts, then reports *"unable to
+  connect"*: it is a hosted commercial service needing credentials the image
+  cannot supply. You can bring your own `ANTHROPIC_API_KEY` or sign in to
+  Posit's service; either way it is billed to you.
+- **AI agent access (MCP)** — lets a coding agent *you* run in the session's
+  Terminal (Claude Code, Copilot CLI, any MCP client) see and drive the **live R
+  session**: list your loaded objects, describe a data frame in memory, read
+  package docs, and — in **Read + execute** mode — run R in your session against
+  your loaded state, so it can build a notebook chunk by chunk instead of
+  re-rendering to find each bug. Off by default; turn it on with **AI agent
+  access** on the launch form.
 
-  An institutional **GitHub Copilot subscription backs Posit Assistant in
-  Positron**; whether RStudio Server can use Copilot as the Assistant's backend
-  is **unverified** — if it can, that is the ideal route (no per-token spend,
-  institutional identity). Until someone confirms it, native Copilot above is
-  the working AI feature and the Assistant pane is decoration. Nothing in this
-  app blocks any of it: the backend starts cleanly, the image ships node, and
-  compute nodes reach both gateways.
-
-**AI agent access (MCP).** A third, different integration: instead of a chat
-pane, it lets a *coding agent you run in the session's Terminal* — Claude Code,
-Copilot CLI, any MCP client — see and drive the **live R session**. Set **AI
-agent access** on the launch form to **Read-only** or **Read + execute** (Off is
-the default and changes nothing). Then, once per project:
+MCP takes one setup, per project, in a session launched Read-only or
+Read + execute:
 
 ```r
 install.packages(c("mcptools", "btw"))   # into the project library
@@ -174,133 +161,21 @@ rstudio_mcp_init            # writes ./.mcp.json (committable; the lab inherits 
 claude                      # or your agent, run from the project in the Terminal
 ```
 
-**First-time setup needs two restarts, and neither announces itself**, because
-both halves are read exactly once, at startup:
+**Expect two restarts the first time, because nothing prompts you for them.**
+Both halves are read once, at startup: the session registers with `mcptools`
+when it starts, and your agent reads `.mcp.json` when it launches. So after that
+first `install.packages()`, do **Session → Restart R**; and if your agent was
+already running when you ran `rstudio_mcp_init`, quit and relaunch it. Skipping
+either fails *silently* — an MCP server with no session to connect to answers
+from its own empty process — so verify once by asking the agent to list your
+objects.
 
-- *The session registers with `mcptools` when it starts* — so a session that
-  began before those packages were installed is **not** registered, no matter
-  what you rerun afterwards. After that first `install.packages()`, do
-  **Session → Restart R** (Ctrl+Shift+F10). You are registered when the console
-  prints `-- MCP: agents in this session's terminal may ... --`; the message
-  `-- AI agent access was requested at launch, but package 'mcptools' is not
-  installed ... --` (or no message at all) means you are not.
-- *Your agent reads `.mcp.json` when it launches* — an agent already running
-  when you ran `rstudio_mcp_init` will never see the file. Quit and relaunch it
-  from the project directory; in Claude Code, `/mcp` should then list
-  **r-session** and **r-session-status**.
-
-Verify once, because the failure is silent: an MCP server that finds no session
-to connect to does not error — it answers from **its own empty process**. Ask
-the agent to list your objects; an empty environment where your data should be
-means one of the two restarts is still missing.
-
-The agent gets tools with **no equivalent in its own toolbox**: list the objects
-you have loaded, describe an in-memory data frame, read R help and vignettes for
-installed packages, and see the file open in the editor. **Read + execute** adds
-`run_r` (the agent runs R *in your session*, against your loaded state — with
-clients like Claude Code asking your approval on each call; that per-call
-consent is the *client's* behaviour, so an auto-approving client skips it)
-and the R-package-development tools (`R CMD check`, tests,
-coverage, roxygen docs, `load_all`) — so an agent can build a notebook chunk by
-chunk, or iterate on a package, without re-rendering to find each bug. It
-deliberately does **not** serve files/git/web tools: your agent already has
-better ones, and two ways to do everything makes it pick the worse one.
-
-**While the session is busy.** You and the agent share one single-threaded R
-process, so nothing ever runs concurrently — tool calls execute only when the
-console is idle, and requests serialize. In practice:
-
-- *Your code is running* → the agent's tool calls (reads included) **queue
-  behind it**; they never interrupt your computation. If the console doesn't
-  free up within 120 s the agent gets a clean timeout error instead — so
-  during an hours-long fit, the live session is effectively off-limits to the
-  agent. Raise `MCPTOOLS_SESSION_RESPONSE_TIMEOUT_SECONDS` if it should wait
-  longer.
-- *The agent's code is running* → your console input waits its turn; the
-  session feels briefly unresponsive, nothing is lost. The agent's code
-  doesn't echo in your console, but its **side effects are shared**: objects
-  it creates, plots on your graphics device, options, loaded packages —
-  that's what the per-call approval in execute mode is for. **Esc interrupts**
-  whatever R is evaluating, an agent's call included.
-
-**Code that prompts for input is dangerous here.** The session is single-threaded
-and the agent's console is not one you can type into, so a submitted call that
-asks a question — `devtools`/`renv` "install? [Y/n]", `askYesNo()`, `menu()` —
-would block the R thread on a prompt no one can answer, and because that thread
-also drives the tool-call event loop, the *whole session* deadlocks: every later
-call times out, and no machine can un-wedge it (the 120 s timeout is on the
-server side and only gives up waiting — recovery below). Execute-mode sessions
-therefore turn the common prompts (`needs.promptUser`, `renv.consent`,
-`askYesNo`) into an immediate **error** rather than a hang, which the agent
-sees as a normal tool error. Those options catch the prompts that fire from
-*inside* package code, which no code inspection could see. The **direct** calls
-an agent might write are caught earlier, at the door: the MCP server wraps
-`run_r` so submitted code is parsed and screened **before** it reaches the
-session, and anything that waits for console or UI input — `readline`, `scan`,
-`menu`, `browser`, `readLines()` on stdin, `file.choose`,
-`rstudioapi::showQuestion` and friends — comes back as an explanatory error
-instead of a deadlock. It parses rather than greps, so `# readline() here`, the
-string `"readline"`, and `readLines("data.txt")` all pass untouched. The guard
-travels with the tool, so every client of this server gets it, whichever agent
-connects — but only of *this* server: a hand-rolled `mcptools::mcp_server()`
-or a `.mcp.json` written before the guard existed serves `run_r` bare
-(re-run `rstudio_mcp_init` — it detects a pre-guard file and prints the
-replacement entry).
-
-Neither layer can see through indirection (`do.call`, `eval(parse())`) or into a
-`source()`d file, so prefer non-interactive calls (`library()` or
-`pkgload::load_all(attach = FALSE)` over `devtools::load_all()`). If a session
-does wedge, **a human at the console recovers it** (verified live): **Esc**
-interrupts a blocked `readline()` or dialog, **clicking** answers an
-`rstudioapi` modal, and **`Q`** exits a `browser()` wedge — the debugger prompt
-works normally throughout. There is no machine path: the MCP transport carries
-code in and output out, and can neither answer a prompt nor interrupt one, so
-an unattended run stalls at the wedge until someone comes back. While it waits,
-**leave the session alone** — probing a wedged session with further tool calls
-is not a free read: the queued callbacks can error during recovery and corrupt
-console input, so a call that times out should be treated as possibly lost, and
-diagnostics saved for after the human has cleared the console.
-
-There is one probe that *is* free: the **`rstudio_session_status`** tool,
-served by a second, separate server (`r-session-status` in the same
-`.mcp.json`) that never connects to the session — it reads `/proc` from its
-own process, so it keeps answering even while the session is wedged. It
-crosses the session's CPU, its **children's** CPU (a `system()` call running
-an aligner looks idle from the session itself), whether a `run_r` call is
-still unanswered, and — via `/proc/<pid>/syscall` — what the session is
-blocked in, reporting **idle / busy / busy-subprocess / waiting-timer /
-waiting-io / waiting / dead** with the evidence. It is deliberately cautious
-about what it calls self-clearing: only a **pure sleep** (`nanosleep`) is
-confidently `waiting-timer` ("no action needed"), and disk I/O is a transfer
-(`waiting-io`). Everything else — a `poll`/`select` with a timeout (which looks
-the same whether it is a `Sys.sleep` or an event loop wedged forever), an
-indefinite wait, or a blocking read — is bare `waiting`, and there the advice
-hands the judgement to the agent, naming exactly what the session is blocked in
-(from `/proc/<pid>/syscall`): it knows the code it submitted, so I/O-ish or
-sleeping code means wait, while pure computation or possibly-prompting code
-means get the user to press Esc. Erring toward "ask the agent" over a confident
-"just wait" is intentional — telling someone to wait forever on a wedged
-session is the worse mistake.
-This is what an agent should call after a timeout instead of retrying. Two
-notes: the status server errors at startup when the agent runs *outside* any
-session (nothing to observe — expected, not a breakage), and the real fix
-(per-call timeout and cancellation) still belongs upstream in
-`mcptools`/`btw`.
-
-Why this survives you closing the laptop: the agent, its MCP server and the R
-session all run **on the compute node** over node-local sockets — your browser
-is only a viewer. Close the tab or sleep the machine and the work continues; on
-reconnect, the Terminal may need a **Ctrl+L** to redraw the agent's UI. It ends
-only when the job's walltime expires or you quit the session. Which tools are
-served is controlled per-launch by the form (via `RSTUDIO_MCP_TOOLS`, with the
-guard's location in `RSTUDIO_MCP_GUARD`), so the `.mcp.json` never needs
-editing. A read-only session never exposes `run_r`, enforced twice: the
-execute tools are filtered out of the served list whatever a config override
-says, and `BTW_RUN_R_ENABLED=false` is exported explicitly — btw serves an
-explicitly named `run_r` when the variable is merely absent, so absence is not
-safety. Need a lab-specific capability btw lacks? Add an `ellmer::tool()` of
-your own to the server command — `mcptools` serves any ellmer tool, not just
-btw's.
+Two things to know before using execute mode: you and the agent share one
+single-threaded R session (calls serialize, side effects are shared), and agent
+code that stops to **ask a question** would wedge that session — guarded here,
+but the guard has limits. All three integrations in full, what is verified and
+what is not, the guard and how to recover a wedge, and the
+`rstudio_session_status` tool: **[docs/ai-agents.md](docs/ai-agents.md)**.
 
 **Shell wrappers.** The same images and libraries from a terminal:
 
@@ -330,7 +205,7 @@ hard error, because R would ignore it silently.
 sync_images                  # check; on a terminal, offers to pull if stale
 sync_images --sync           # pull whatever is stale (submits an sbatch job)
 sync_images --watch          # follow the running/submitted sync job's log
-sync_images --help           # the rest (--local, --image-dir, --manifest)
+sync_images --help           # the rest (--check, --local, --image-dir, --manifest)
 ```
 
 Every run says where it operates (your `RSTUDIO_IMAGE_DIR` — never the current
@@ -353,7 +228,18 @@ When something is stale, the run ends with the offer:
 ```
 
 There is no automation on purpose (the reference cluster has no cron); upstream
-rebuilds its rolling tags monthly, so run `sync_images` some time after the 1st.
+rebuilds its rolling tags monthly and again within a week of each stable RStudio
+Server release, so run `sync_images` every few weeks rather than on a date.
+
+**A pulled image has to prove it launches before it replaces the live one.**
+The sync starts `rserver` from the candidate on the pulling node and requires a
+sign-in page; a candidate that fails leaves your current image untouched, is
+kept as a `.rejected.sif` file for inspection, and is reported in the sync log,
+while the other versions still update. Since the images are rolling
+and RStudio changes its options between releases, this is the difference between
+a red line in a log and a lab whose sessions all time out. `RSTUDIO_SYNC_SMOKE=0`
+skips it if the check itself is what's wrong.
+
 The previous build of every image is retained — **rollback is a rename**. That,
 the registry/digest architecture, and what actually changes between rebuilds:
 **[docs/images.md](docs/images.md)**.
@@ -382,12 +268,9 @@ and how the test suite works: **[docs/development.md](docs/development.md)**.
   They cannot be turned *down* — RStudio emits them at `ERROR`, above any log
   threshold the app can set — but they are turned *aside*: `logging.conf`
   defaults every logger to a file under `logs/` (next to `output.log`), so the
-  session process's records, including the Assistant backend's, never reach the
-  R console. Only `rserver` is routed to stderr, so a session that *genuinely*
-  fails to start still surfaces — its startup errors go to `output.log`. (The
-  earlier config keyed the file logger on the `rsession` scope alone, and
-  records the Assistant logged under a different sub-scope slipped through the
-  stderr default into the console; defaulting to file closes that.)
+  session's records never reach the R console. Only `rserver` is routed to
+  stderr, so a session that *genuinely* fails to start still surfaces — its
+  startup errors go to `output.log`.
 - **`install.packages()` says a package "is not available" that clearly exists
   on CRAN.** Older R images pin their CRAN mirror to a dated snapshot from
   that R version's era (deliberate; the newest image tracks current CRAN), so

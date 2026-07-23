@@ -8,7 +8,7 @@ builds images; it only consumes them.
 ```
   rstudio-img (GitHub Actions)         registry              this cluster
   ────────────────────────────         ────────              ────────────
-  monthly rebuild + on release  ──►  :4.3 :4.4               sync-images.sh
+  monthly rebuild + on release  ──►  :4.3 :4.4        sync-images.sh + canary
                                      :4.5 :4.6  ──digest──►  rstudio-<ver>.sif
                                      :latest                 rstudio-<ver>.sif.digest
                                                              images.json
@@ -61,6 +61,36 @@ sync_images --manifest
 
 `images.json` records the digest, R, RStudio and Quarto versions, and pull time
 of every image, so you can always reconstruct what a given analysis ran under.
+
+**The launch canary: a candidate must start before it goes live.** After a pull
+and before the new `.sif` replaces the current one, `sync-images.sh` runs
+`smoke_launch`: `rserver` is started from the candidate under singularity, on
+the pulling node, with **the same flag set `script.sh.erb` uses**, and must
+serve its sign-in page on the node's network address.
+
+The failure it exists to catch is specific. The tags are rolling, and Posit
+changes `rserver`'s options between releases — 2026.07.0 deprecated
+`--test-config` and added path validation for `database-config-file`, an option
+this app passes explicitly — and `rserver` dies on an unknown option. Without
+the canary, the first sign of an incompatible image is a user's session timing
+out at `wait_until_port_used`, for the whole lab at once, on an image that has
+already overwritten the good one.
+
+- A rejected candidate is renamed `.rejected.sif` (kept for inspection; delete
+  it once you have looked) and the live image is left **untouched**.
+- One version failing does not abandon the others: the remaining versions still
+  pull, the `latest` symlink and `images.json` are still rebuilt for what did
+  promote, and the run exits nonzero naming the rejected versions.
+- The canary's flag list is a deliberate second copy of `script.sh.erb`'s.
+  `test/run.sh` extracts both and fails on drift — names, plus values for the
+  flags whose values are literals (`--www-address=0.0.0.0` being the one that
+  matters, since it decides whether the web node can reach a session at all).
+- `RSTUDIO_SYNC_SMOKE=0` skips it — the escape hatch for when the canary itself
+  is the broken thing.
+
+Upstream also smoke-tests every publish under docker with the same flags, but
+only this canary exercises **singularity**, on this cluster, where the host
+environment leaks in and rootless is not optional.
 
 **What actually moves between rebuilds.** R's patch version is the *least*
 significant thing here — the package ABI is stable within a minor version, so

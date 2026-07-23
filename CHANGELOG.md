@@ -108,6 +108,16 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ### Changed
 
+- **The README is now the short version, and `docs/ai-agents.md` is the long
+  one.** The AI material had grown to a third of the README — most of it
+  mechanism (the single-threaded session, the prompt-deadlock guard and its
+  limits, wedge recovery, the `rstudio_session_status` verdicts, Posit
+  Assistant's credential routes and what is still unverified) that you need
+  only once you are digging in. The README keeps what you need to *use* it:
+  what the three integrations are and how they differ, the launch-form select,
+  the per-project setup with its two restarts, and how to tell it is working.
+  Everything else moved, in full, to the new page.
+
 - Deploys now copy only the app files (OnDemand templates plus
   `sync-images.sh`, `r-wrappers.sh`, `conf.sh`, `ui.sh`) instead of the whole
   repo. Repo tooling — installer, tests, docs, release scripts — no longer
@@ -118,6 +128,19 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   run it from a checkout (or `curl | bash`) instead.
 
 ### Fixed
+
+- **`rstudio_session_status` described a verdict it no longer gives.** The
+  tool's own description — the text an agent reads to interpret the result —
+  still said `waiting-timer` meant "a self-clearing `Sys.sleep`/poll", after
+  the verdict was narrowed to a *pure* sleep precisely because a timed poll
+  cannot be told apart from an event loop wedged forever. An agent reading it
+  would have taken "no action needed" from a verdict the code no longer
+  returns for polls. Description and behaviour now agree.
+
+- The image launch canary and the upstream rebuild cadence reached the user
+  docs: `sync_images` can now reject a pulled image, and the README said
+  nothing about it. The README also advised syncing "after the 1st", from
+  before upstream added a rebuild after each stable RStudio release.
 
 - **Session reachability no longer hangs on an unset default.** rserver's
   `--www-address` was never passed, so every session was reachable from the

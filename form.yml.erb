@@ -280,10 +280,12 @@ attributes:
     help: >-
       Let a coding agent run in this session's Terminal (Claude Code, Copilot
       CLI) see the live R session — list objects, describe data frames, read
-      docs. "Read + execute" also lets it run R code in the session; the agent
-      asks for approval on every call. Needs the mcptools + btw R packages in
-      the project library, and a one-time <code>rstudio_mcp_init</code> in the
-      project directory.
+      docs. "Read + execute" also lets it run R code in the session — clients
+      like Claude Code ask your approval per call, but that is the client's
+      behaviour, not a guarantee from here. Needs the mcptools + btw R packages
+      in the project library, and a one-time <code>rstudio_mcp_init</code> in
+      the project directory (which prints the two restarts a first setup
+      needs).
     options:
       - [ "Off", "off" ]
       - [ "Read-only", "read" ]
