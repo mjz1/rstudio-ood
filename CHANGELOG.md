@@ -28,7 +28,11 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   chunk-by-chunk against live state instead of re-rendering to find each bug,
   or iterate on a package in place. Enabled sessions auto-register at
   startup (after renv activation, so project libraries work); one-time
-  project setup is the new `rstudio_mcp_init` wrapper. Off is the default and
+  project setup is the new `rstudio_mcp_init` wrapper, which spells out the
+  two restarts a first setup needs — the session registers with `mcptools`
+  only at startup, and the agent reads `.mcp.json` only at launch, so
+  installing the packages into a running session or writing the file beside a
+  running agent silently changes nothing. Off is the default and
   changes nothing; no network ports are involved (node-local sockets only),
   and read-only sessions never expose an execute tool. (#1)
 

@@ -358,6 +358,13 @@ rstudio_mcp_init() {
             if grep -q 'guard_btw_tools' "$f" 2>/dev/null &&
                grep -q '"r-session-status"' "$f" 2>/dev/null; then
                 echo "already configured: $f (r-session + status servers, run_r guard wired)"
+                # Re-running an idempotent command usually means "it isn't
+                # working". The two answers are both restarts (see below), so
+                # say them here rather than only on the write path -- this is
+                # the moment the user is actually looking.
+                echo "  not seeing your session? both halves are read only at STARTUP:"
+                echo "  restart R if mcptools was installed after the session began,"
+                echo "  and restart the agent if it was running before this file existed."
                 return 0
             fi
             {
@@ -385,9 +392,25 @@ rstudio_mcp_init() {
         echo '}'
     } > "$f"
     echo "wrote $f"
+    # Both halves of the setup are read exactly ONCE, at startup: the session
+    # registers with mcptools from its rstudio.sessionInit hook, and the agent
+    # reads .mcp.json when it launches. So installing the packages into an
+    # already-running session, or writing this file beside an already-running
+    # agent, changes nothing until each is restarted -- and NEITHER failure
+    # announces itself: an MCP server that finds no session to connect to
+    # answers from its own empty process instead of erroring. Spelling out the
+    # restarts costs three lines here and saves the silent-empty-environment
+    # debugging session that first-time setup otherwise produces.
+    if [ -z "${RSTUDIO_MCP_ACCESS:-}" ]; then
+        echo "  NOTE: this shell is not inside an agent-enabled session -- launch one with"
+        echo "        'AI agent access' set on the form (the file is ready for it)."
+    fi
     echo "  1. install the R packages into this project's library:  install.packages(c('mcptools','btw'))"
-    echo "  2. launch a session with 'AI agent access' enabled on the form"
-    echo "  3. run your agent (claude, copilot) from this directory in the session's Terminal"
+    echo "  2. if you installed them just now, restart R (Session > Restart R): the session"
+    echo "     registers with mcptools only at startup, so it is NOT registered yet. You are"
+    echo "     registered once the console prints '-- MCP: agents in this session's terminal ... --'"
+    echo "  3. run your agent (claude, copilot) from this directory in the session's Terminal."
+    echo "     An agent that was ALREADY running has not read this file -- restart it too."
 }
 
 update_r() {

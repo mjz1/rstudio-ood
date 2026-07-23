@@ -174,6 +174,26 @@ rstudio_mcp_init            # writes ./.mcp.json (committable; the lab inherits 
 claude                      # or your agent, run from the project in the Terminal
 ```
 
+**First-time setup needs two restarts, and neither announces itself**, because
+both halves are read exactly once, at startup:
+
+- *The session registers with `mcptools` when it starts* — so a session that
+  began before those packages were installed is **not** registered, no matter
+  what you rerun afterwards. After that first `install.packages()`, do
+  **Session → Restart R** (Ctrl+Shift+F10). You are registered when the console
+  prints `-- MCP: agents in this session's terminal may ... --`; the message
+  `-- AI agent access was requested at launch, but package 'mcptools' is not
+  installed ... --` (or no message at all) means you are not.
+- *Your agent reads `.mcp.json` when it launches* — an agent already running
+  when you ran `rstudio_mcp_init` will never see the file. Quit and relaunch it
+  from the project directory; in Claude Code, `/mcp` should then list
+  **r-session** and **r-session-status**.
+
+Verify once, because the failure is silent: an MCP server that finds no session
+to connect to does not error — it answers from **its own empty process**. Ask
+the agent to list your objects; an empty environment where your data should be
+means one of the two restarts is still missing.
+
 The agent gets tools with **no equivalent in its own toolbox**: list the objects
 you have loaded, describe an in-memory data frame, read R help and vignettes for
 installed packages, and see the file open in the editor. **Read + execute** adds
