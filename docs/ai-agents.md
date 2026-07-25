@@ -112,6 +112,26 @@ The launch form does, per session, via `RSTUDIO_MCP_TOOLS` (and the guard's
 location in `RSTUDIO_MCP_GUARD`) — so `.mcp.json` is generic and never needs
 editing. The same committed file works for every user and every app version.
 
+If you edit it anyway, **keep `--no-init-file`**. It is load-bearing, not an
+optimisation: a stdio MCP server speaks JSON-RPC over stdout, so *any* R
+startup chatter corrupts the handshake — the client reads a package banner
+where it expected a reply and the server never connects. Project `.Rprofile`
+files are full of such chatter, and renv is the worst case: on a large project
+it prints `NOTE: Dependency discovery took N seconds...` to stdout *and* takes
+20+ seconds doing it, blowing the client's 30 s connect timeout as well
+(measured on a 77k-file project: 32.3 s startup versus 0.16 s with the profile
+skipped — two independent fatal failures). Skipping the profile closes the
+whole class rather than muting one source, and costs nothing: the server does
+not need the project. It defines tools and dials the session's socket; the
+tools *execute in the session*, which has renv fully loaded. `mcptools` and
+`btw` still resolve because renv exports `R_LIBS_USER` to child processes.
+
+`rstudio_mcp_init` writes the flag for you, but its staleness check does not
+look for it — so a hand-edit that drops it is not caught, and the symptom
+(a server that silently never connects) points nowhere near the cause. If a
+project genuinely needs its profile, the narrow fix is an `env` block setting
+`RENV_CONFIG_SYNCHRONIZED_CHECK=FALSE` rather than restoring the profile.
+
 A read-only session never exposes `run_r`, enforced twice: the execute tools are
 filtered out of the served list whatever a config override says, *and*
 `BTW_RUN_R_ENABLED=false` is exported explicitly. btw's variable only gates its
