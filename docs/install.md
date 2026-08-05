@@ -256,10 +256,16 @@ RSTUDIO_IMAGE_DIR=/tmp/testimages sync_images
 | `RSTUDIO_QUEUE` | default Slurm partition, pre-selected in the dropdown | site |
 | `RSTUDIO_QUEUES` | comma-separated partitions in the Queue dropdown, incl. GPU ones; each entry is `partition` or `partition\|label` (install.sh auto-labels with GPU type + time limit); falls back to `RSTUDIO_QUEUE` if unset | site |
 | `RSTUDIO_SYNC_PARTITION` | partition `sync-images.sh` submits pulls to | site |
+| `RSTUDIO_APP_DIR` | where `install.sh` deploys the app (`~/ondemand/dev/<app-name>`); set by `--app-dir`/`--app-name` | per-user |
 | `RSTUDIO_TORCH_CUDA` | space-separated R-torch CUDA builds, highest first (default `12.9 12.8 12.6`); the session picks the highest that fits the node driver | site |
 
 Every key has a default that reproduces the previous hard-coded behaviour, so a
 config file written before these keys existed keeps working untouched.
+
+Two keys are environment-only and never written to the config file.
+`RSTUDIO_DEV_CONFIG` relocates the config file itself — which is what makes the
+scratch-directory run above possible, since the installer must be told where to
+write before it has anything to read.
 
 `RSTUDIO_STATE_DIR` is read from the environment only and defaults to the
 current slot's own state directory

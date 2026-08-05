@@ -8,6 +8,7 @@
 # detected with three HTTP HEAD requests instead of a 4 GB download.
 #
 #   sync-images.sh                  check; on a terminal, offers to pull if stale
+#   sync-images.sh --check          the same, said explicitly (for scripts)
 #   sync-images.sh --sync           pull stale images (submits an sbatch job)
 #   sync-images.sh --sync --local   pull inline, for use inside an allocation
 #   sync-images.sh --sync 4.6       restrict to specific R versions

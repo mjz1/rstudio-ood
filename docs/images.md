@@ -8,7 +8,8 @@ builds images; it only consumes them.
 ```
   rstudio-img (GitHub Actions)         registry              this cluster
   ────────────────────────────         ────────              ────────────
-  monthly rebuild + on release  ──►  :4.3 :4.4        sync-images.sh + canary
+  monthly rebuild, weekly gate  ──►  :4.3 :4.4        sync-images.sh + canary
+  on a new RStudio, on release
                                      :4.5 :4.6  ──digest──►  rstudio-<ver>.sif
                                      :latest                 rstudio-<ver>.sif.digest
                                                              images.json

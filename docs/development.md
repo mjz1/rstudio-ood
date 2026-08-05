@@ -78,7 +78,7 @@ template/script.sh.erb
 view.html.erb
   ok   the password is NEVER the literal string "password"
   ...
-38 passed, 0 failed
+69 passed, 0 failed
 ```
 
 It builds a fixture cluster in a temp directory (images, package libraries,
@@ -101,7 +101,7 @@ staging app.
 ## The form discovers images
 
 `form.yml.erb` globs `rstudio-<minor>.sif`, labels each from `images.json`
-(`R 4.6.1 · RStudio 2026.06.0+242`), and offers only versions whose package
+(`R 4.6.1 · RStudio 2026.07.1+147`), and offers only versions whose package
 library actually exists. Two consequences:
 
 - Adding an R version upstream needs no edit here. Run `sync_images --sync`.
@@ -133,16 +133,17 @@ Singularity, and `script.sh.erb` compensates for both:
    a `logging.conf` with `logger-type=stderr` so errors reach the job's
    `output.log`.
 
-The cleaner fix is upstream, in `rstudio-img`'s Dockerfile, after the deb
-install — mirroring what rocker does:
+**Both were fixed upstream in `rstudio-img` v1.1.1**, which now replays the
+fixups after the deb install — it removes the baked `secure-cookie-key`, writes
+`database.conf` `0644`, and ships a `logging.conf` with `logger-type=stderr`
+(`Dockerfile:187-190`). `database.conf` holds only `provider=sqlite`, so
+widening it leaks nothing.
 
-```dockerfile
-RUN chmod 0644 /etc/rstudio/database.conf \
- && rm -f /var/lib/rstudio-server/secure-cookie-key
-```
-
-`database.conf` holds only `provider=sqlite` by default, so widening it to
-world-readable leaks nothing. Until that lands, the workarounds above are what
-make the images usable rootless.
+The app keeps both compensations anyway. They cost nothing, and the images are
+*rolling*: an older `.sif` a lab has not synced yet, or someone else's build,
+still needs them. The trade-off is that a regression upstream would hide behind
+the workaround indefinitely — so if you want to confirm the upstream fix stands
+on its own, drop `--database-config-file` for a single launch rather than
+trusting that it is still redundant.
 
 Back to the [README](../README.md).

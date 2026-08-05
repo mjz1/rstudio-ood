@@ -116,6 +116,16 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   `--allow-all-tools`, which also auto-approves Copilot's shell and file-write
   tools. Verified against Copilot CLI 1.0.78; the flags have changed between
   releases and nothing here pins a version.
+- **Docs audit before 1.0.** `docs/development.md` still said the rootless
+  `database.conf` / `logging.conf` fixes were pending upstream — they landed in
+  `rstudio-img` v1.1.1, and the app keeps its own compensations only because the
+  images are rolling and an unsynced or third-party `.sif` still needs them. Its
+  sample test output said `38 passed` (69 now) and its example image label was a
+  version old. `docs/images.md`'s pipeline diagram showed only the monthly
+  rebuild, not the weekly RStudio-release gate. `docs/install.md`'s config table
+  was missing `RSTUDIO_APP_DIR` and never explained `RSTUDIO_DEV_CONFIG`, the
+  key its own scratch-run recipe depends on. `sync-images.sh --check` worked but
+  appeared in no `--help` output while the README pointed at it.
 
 ### Changed
 
