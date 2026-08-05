@@ -4,8 +4,9 @@ Notable changes, newest first. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [semantic versioning](https://semver.org/).
 
-**`0.9.x` is pre-release**: the app is public but not yet announced to users, so
-breaking changes are still cheap. `1.0.0` will mark the release to the lab.
+**`1.0.0` is the release to the lab** — everything before it was pre-announcement
+bake-in. Versions bump when a downstream install should update; the notice in
+the launch form and at session start fires on any difference from `main/VERSION`.
 
 Update an existing install to the latest release with:
 
