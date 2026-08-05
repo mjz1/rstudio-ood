@@ -62,6 +62,41 @@
   bind_paths  = setting.call('RSTUDIO_BIND_PATHS',
                              '/data1,/run/munge,/etc/slurm,/usr/lib64/slurm,/usr/lib64/libmunge.so.2')
                   .split(',').map(&:strip).reject(&:empty?)
+
+  # AI agent access (MCP), from the form's three-way select: off | read |
+  # execute. Guarded like new_session_name (older forms lack the field) and
+  # ALLOWLISTED, not sanitised: the value is interpolated into the rsession
+  # wrapper, so nothing free-form may survive to there.
+  agent_access = context.respond_to?(:agent_access) ? context.agent_access.to_s.strip : 'off'
+  agent_access = 'off' unless %w[read execute].include?(agent_access)
+
+  # btw tool groups served to the agent. Curated to the groups with no native
+  # equivalent in a coding agent -- serving btw's files/git/etc. would give the
+  # model two ways to do everything and it will pick the worse one half the
+  # time. run_r (the execute tool) and pkg (R CMD check/test/coverage/document/
+  # load_all -- R package dev, with no coding-agent equivalent) are appended
+  # only in execute mode: pkg's check/test SOURCE AND RUN the package's own
+  # code, so they are execute-level, not read.
+  #
+  # The execute tools are FILTERED OUT of non-execute modes, not merely not
+  # added. Config/env can override this list (RSTUDIO_MCP_TOOLS), and btw's
+  # BTW_RUN_R_ENABLED is NOT the backstop it appears to be: it only gates the
+  # DEFAULT tool set -- btw_tools('run_r') sets match_mode = "explicit" and
+  # serves a working run_r with the env var unset (verified against btw
+  # 1.3.0). So a config line adding run_r to the read set would hand every
+  # read-only session an execute tool, and an UNGUARDED one (read mode ships
+  # no AST gate). Same lesson as RSTUDIO_DATA_HOME: an app-level premise a
+  # user-level setting can override is not a guarantee. Scrubbed hard because
+  # it lands inside the wrapper heredoc; empty (or scrubbed-to-empty) falls
+  # back to the default -- exporting "" would make btw_tools() serve its
+  # ENTIRE default set, files/git/web tools included.
+  mcp_tools = setting.call('RSTUDIO_MCP_TOOLS', 'env,docs,sessioninfo,ide')
+                .gsub(/[^A-Za-z0-9_,]/, '')
+  unless agent_access == 'execute'
+    mcp_tools = mcp_tools.split(',').reject { |t| %w[run_r pkg].include?(t) }.join(',')
+  end
+  mcp_tools = 'env,docs,sessioninfo,ide' if mcp_tools.split(',').reject(&:empty?).empty?
+  mcp_tools = "#{mcp_tools},run_r,pkg" if agent_access == 'execute'
 -%>
 
 # Load the required environment
@@ -176,6 +211,22 @@ mkdir -p "${SLOT_DIR}/data" "${SHARED_CACHE}"
 touch "${SLOT_DIR}"
 echo "RStudio session slot: ${SESSION_SLOT}  (state in ${SLOT_DIR}/data; cache + renv shared)"
 
+# OnDemand's per-session output dir (we are cd'd into it here; output.log and
+# rsession.sh live in it). Captured before the `cd "${HOME}"` below -- the
+# rsession file logger writes here so its logs travel with the session.
+SESSION_DIR="${PWD}"
+<%- if agent_access != 'off' -%>
+
+# An agent-enabled session MUST have mcp-guard.R (staged with the app's
+# template/): execute mode needs the run_r AST gate, every mode needs the
+# session_status tool it also defines. Both .mcp.json commands stop() on a
+# set-but-missing path, but that error surfaces in the agent's server log --
+# warn HERE too, where output.log makes a broken deploy visible to the user.
+if [ ! -r "${SESSION_DIR}/mcp-guard.R" ]; then
+  echo "WARNING: MCP guard missing at ${SESSION_DIR}/mcp-guard.R -- run_r would be UNGUARDED and session_status unavailable (broken deploy?)" >&2
+fi
+<%- end -%>
+
 # Generate an `rsession` wrapper script
 export RSESSION_WRAPPER_FILE="${PWD}/rsession.sh"
 (
@@ -214,6 +265,50 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   export RSTUDIO_UPDATE_LATEST="${_latest_for_r:-}"
   export RSTUDIO_UPDATE_DEPLOYED="${_dep_for_r:-}"
   export R_PROFILE="/tmp/site-profile.R"
+<%- if agent_access != 'off' -%>
+
+  # AI agent access (opt-in on the launch form). Children of rsession -- the R
+  # console AND the Terminal pane -- inherit these: the site profile reads the
+  # access mode to auto-register this session with mcptools, and an agent's
+  # Rscript MCP server (spawned in the Terminal by claude/copilot) reads the
+  # tool list.
+  export RSTUDIO_MCP_ACCESS="<%= agent_access %>"
+  export RSTUDIO_MCP_TOOLS="<%= mcp_tools %>"
+  # This wrapper execs rsession, so \$\$ IS the rsession pid, and every child
+  # (Terminal shell, agent, MCP servers) inherits it. The session_status tool
+  # prefers this over walking /proc ancestry: the walk assumes the Terminal
+  # descends from a process named exactly "rsession", which client spawning
+  # strategies (double-fork, reparenting) can silently break -- and a pid the
+  # status server can check directly also makes "the session died" detectable
+  # after reparenting, where the walk could only say "unknown".
+  export RSTUDIO_SESSION_PID="\$\$"
+  # mcp-guard.R: the run_r AST gate AND the session_status tool, sourced by
+  # both .mcp.json server commands. Exported in read mode too -- read sessions
+  # serve no run_r (nothing gets wrapped), but the status server still needs
+  # the file for its idle/busy/dead observation. Exported as a PATH rather
+  # than baked into .mcp.json so the committed .mcp.json stays portable across
+  # users and app versions -- same reason RSTUDIO_MCP_TOOLS travels this way.
+  # Unset (a terminal outside any session) means no wrapping and a cleanly
+  # erroring status server.
+  #
+  # Anchored to the STAGING dir, not app_dir: staged apps share one config, so
+  # RSTUDIO_APP_DIR points at the stable app (rstudio_dev) -- which deploys from
+  # main and has no mcp-guard.R at all. That would resolve to a missing file and
+  # silently serve an UNGUARDED run_r. OnDemand copies template/ into the job's
+  # staging dir, so this path always matches the app that launched the session
+  # (same reason bin/auth is referenced via \$PWD above).
+  export RSTUDIO_MCP_GUARD="${SESSION_DIR}/mcp-guard.R"
+<%- if agent_access == 'execute' -%>
+  export BTW_RUN_R_ENABLED="true"
+<%- else -%>
+  # An EXPLICIT false, not mere absence. btw's env var only gates its DEFAULT
+  # tool set; a tool list that names run_r (a config override could) would be
+  # served regardless (match_mode = "explicit", verified against btw 1.3.0).
+  # With the var set to false, btw refuses run_r however it was requested --
+  # this is the backstop the mode filter above cannot be alone.
+  export BTW_RUN_R_ENABLED="false"
+<%- end -%>
+<%- end -%>
 
   # System-default prefs (written to \$TMPDIR/xdg above; \$TMPDIR is bound to
   # /tmp). Prepended, so /etc/xdg still serves everything else.
@@ -281,6 +376,63 @@ local({
     ))
   }
 })
+
+# AI agent access (MCP): when the launch form enabled it, register this session
+# with mcptools so an agent in the Terminal pane can see it. Registered as a
+# HOOK, deliberately: rstudio.sessionInit fires after the project .Rprofile and
+# renv activation, so requireNamespace() searches the PROJECT library -- which
+# is where renv-managed projects actually have mcptools installed. This site
+# profile itself runs too early for that. Env-gated like everything else here,
+# so the file stays static; an Off session never reaches the setHook call.
+local({
+  mode <- Sys.getenv("RSTUDIO_MCP_ACCESS", unset = "")
+  if (nzchar(mode)) {
+    setHook("rstudio.sessionInit", function(newSession) {
+      if (requireNamespace("mcptools", quietly = TRUE)) {
+        ok <- tryCatch({ mcptools::mcp_session(); TRUE },
+                       error = function(e) {
+                         message("-- MCP session registration FAILED: ",
+                                 conditionMessage(e), " --")
+                         FALSE
+                       })
+        if (ok) {
+          # Agent-submitted code runs on this session's single R thread, driven
+          # by mcptools' later/promises event loop, which only advances when the
+          # console is idle. A submitted call that PROMPTS for input -- devtools/
+          # pkgbuild's "install build tools? [Y/n]", renv's first-use consent,
+          # askYesNo(), menu() -- reads from a console nobody is typing into, so
+          # the thread blocks inside that read, the event loop never resumes, and
+          # the session DEADLOCKS: every later tool call times out with no way to
+          # recover (the 120s timeout is server-side and cannot unblock the
+          # session; even SIGINT does not). In execute mode we pre-empt the
+          # common culprits so a prompt ERRORS at once -- surfacing as a normal
+          # tool error the agent can react to -- instead of hanging the session.
+          # This also changes the shared console's own prompts within THIS
+          # session, which is acceptable: agent access was opted in per launch,
+          # and an errored prompt beats a wedged session. Not a complete fix --
+          # raw readline()/menu() have no option hook and can still block; the
+          # durable answer (per-eval timeout, cancellation, subprocess isolation)
+          # lives upstream in mcptools/btw.
+          if (identical(mode, "execute")) {
+            options(needs.promptUser = FALSE,   # devtools / pkgbuild
+                    renv.consent     = TRUE,     # renv first-use consent
+                    askYesNo = function(msg, ...)
+                      stop("interactive prompt blocked in an MCP execute session: ",
+                           msg, call. = FALSE))
+          }
+          message(sprintf("-- MCP: agents in this session's terminal may %s (tools: %s) --",
+                          if (identical(mode, "execute")) "read it and RUN R CODE in it"
+                          else "read it",
+                          Sys.getenv("RSTUDIO_MCP_TOOLS", unset = "?")))
+        }
+      } else {
+        message("-- AI agent access was requested at launch, but package 'mcptools' ",
+                "is not installed in this R's library paths. ",
+                "install.packages(c('mcptools','btw')) to enable it. --")
+      }
+    }, action = "append")
+  }
+})
 RPROFILE
 
 # RStudio Server 2026.06+ treats an unreadable /etc/rstudio/database.conf as a
@@ -296,10 +448,34 @@ chmod 600 "${TMPDIR}/database.conf"
 
 # rocker's install_rstudio.sh sets logger-type=syslog, and there is no syslog in
 # the container -- so rserver startup failures vanish silently and the only
-# symptom is `wait_until_port_used` timing out. Log to stderr so they land in
-# this job's output.log instead.
-cat > "${TMPDIR}/logging.conf" <<'LOGCONF'
+# symptom is `wait_until_port_used` timing out. Log rserver to stderr so they
+# land in this job's output.log instead.
+#
+# rsession must NOT log to stderr: after startup it captures its own stderr and
+# forwards it into the R console, so a stderr logger prints every log record
+# into the user's console, timestamps and all -- the benign /proc read races
+# from the memory-usage monitor ("Proc stat file ... missing value"), AND every
+# line the Posit Assistant's Node backend writes to stderr, which rsession
+# re-logs at ERROR (SessionAssistant.cpp onStderr: the SQLite ExperimentalWarning).
+#
+# So FILE is the default and stderr is the exception, not the reverse. An
+# earlier version keyed the file logger on [rsession] alone with [*] still on
+# stderr; anything rsession logs under a scope that section does not catch
+# (the Assistant's onStderr among them) fell through [*] to stderr and reached
+# the console anyway. Defaulting [*] to file closes that whole class: every
+# rsession-side logger, named or not, lands in the session's logs/ dir. Only
+# rserver is pulled back to stderr -- its startup failures must reach output.log
+# (there is no syslog in the container; rocker's syslog default hid them), and
+# rserver does not forward stderr to any console. A session that genuinely fails
+# to start still surfaces: rserver logs the failure to output.log.
+mkdir -p "${SESSION_DIR}/logs"
+cat > "${TMPDIR}/logging.conf" <<LOGCONF
 [*]
+log-level=warn
+logger-type=file
+log-dir=${SESSION_DIR}/logs
+
+[rserver]
 log-level=warn
 logger-type=stderr
 LOGCONF
@@ -385,6 +561,13 @@ done
 # then fails; Quarto (Deno) dies with "Failed to load platform certificates".
 # Point them at the container's own CA bundle rather than using --cleanenv,
 # which would also strip SLURM_* and the RStudio variables we rely on.
+#
+# --www-address is pinned to 0.0.0.0 because the OnDemand web node reaches
+# this rserver ACROSS THE NETWORK. Sessions have only ever worked because
+# the unset default happens to bind all interfaces -- reachability from the
+# browser hung on a default Posit could move in any release, invisibly,
+# because rserver would still start "healthy". The flag that decides network
+# reachability does not get left to a default.
 <%= singularity %> exec ${NV_FLAG} -B "$TMPDIR:/tmp" \
  -B "$TMPDIR/run:/run" \
  -B "$TMPDIR/var-lib-rstudio-server:/var/lib/rstudio-server" \
@@ -399,6 +582,7 @@ done
  "<%= image %>" rserver \
  --database-config-file=/tmp/database.conf \
  --server-user="${RSTUDIO_USER}" \
+ --www-address=0.0.0.0 \
  --www-port="${port}" \
  --auth-none=0 \
  --auth-pam-require-password-prompt=0 \

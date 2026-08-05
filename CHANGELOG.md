@@ -17,6 +17,188 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 _Nothing yet._
 
+## [1.0.0] - 2026-08-04
+
+### Added
+
+- **AI agent access (MCP), opt-in per session.** A new launch-form select —
+  Off / Read-only / Read + execute — lets a coding agent running in the
+  session's Terminal (Claude Code, Copilot CLI, any MCP client) see the live
+  R session via the `mcptools` + `btw` R packages: list objects, describe
+  in-memory data frames, look up package docs, and — in execute mode, with
+  the agent asking approval on every call — run R code in the session itself
+  and drive the R-package-development tools (`R CMD check`, tests, coverage,
+  roxygen docs, `load_all`), so an agent can develop notebook code
+  chunk-by-chunk against live state instead of re-rendering to find each bug,
+  or iterate on a package in place. Enabled sessions auto-register at
+  startup (after renv activation, so project libraries work); one-time
+  project setup is the new `rstudio_mcp_init` wrapper, which spells out the
+  two restarts a first setup needs — the session registers with `mcptools`
+  only at startup, and the agent reads `.mcp.json` only at launch, so
+  installing the packages into a running session or writing the file beside a
+  running agent silently changes nothing. Off is the default and
+  changes nothing; no network ports are involved (node-local sockets only),
+  and read-only sessions never expose an execute tool. (#1)
+
+- **MCP sessions are guarded against the prompt deadlock.** Agent-submitted
+  code that waits for console or UI input would block the single-threaded R
+  session's event loop and wedge it permanently — every later tool call timing
+  out, recoverable only by a human at the console. Two layers now prevent it:
+  execute-mode sessions disarm the prompts that fire from inside package code
+  (`devtools`/`renv` install prompts, `askYesNo`), and the MCP server screens
+  submitted code before it reaches the session, refusing `readline`, `scan`,
+  `menu`, `browser`, `readLines()` on stdin, `file.choose`, `edit`, `locator`
+  and the interactive `rstudioapi` dialogs with an explanatory error. The
+  screen parses rather than greps, so mentions in comments and strings pass;
+  it wraps the tool itself, so it protects every client of this server rather
+  than one vendor's. A `.mcp.json` written before the guard existed is
+  detected by `rstudio_mcp_init`, which prints the replacement entry. (#2)
+
+- **A `session_status` tool that works even when the session is wedged.** A
+  second MCP server (`r-session-status`, written into the same `.mcp.json`)
+  never connects to the session: it observes the rsession process via
+  `/proc` from its own process — the session's CPU, its children's CPU
+  (`system()` running an external tool looks idle from the session itself),
+  whether a `run_r` call is still unanswered, and — via
+  `/proc/<pid>/syscall` — what the session is blocked in, and reports idle /
+  busy / busy-subprocess / waiting-timer / waiting-io / waiting / dead with
+  the evidence. Only a pure sleep (`nanosleep`) is confidently self-clearing
+  (`waiting-timer`, "no action"), and disk I/O is a transfer (`waiting-io`);
+  a `poll`/`select` with a timeout — which looks identical whether it is a
+  `Sys.sleep` or an event loop wedged forever — an indefinite wait, and a
+  blocking read all fall to bare `waiting`, where the advice names the
+  syscall and hands the judgement to the agent (which knows whether its code
+  does I/O or could have prompted). Agents call it after a timeout instead of
+  probing the session, which corrupts recovery. (#2)
+
+- **Read-only sessions are read-only twice over.** btw's `BTW_RUN_R_ENABLED`
+  only gates its *default* tool set — a tool list that explicitly names
+  `run_r` (as a config override could) is served with the variable unset. A
+  read session now filters the execute tools out of the served list whatever
+  the override says *and* exports `BTW_RUN_R_ENABLED=false` explicitly. A
+  tool list that is set-but-empty falls back to the read default instead of
+  btw's entire default set (which includes file-write and web tools). (#2)
+
+- `sync-images.sh` now test-launches a freshly pulled image before promoting
+  it. On the pulling compute node, rserver is started under singularity with
+  the same flag set `script.sh.erb` uses and must serve its sign-in page from
+  the node's network address; a candidate that fails leaves the current image
+  live for the whole lab, with rserver's output in the sync log and the
+  rejected candidate kept (as `.rejected.sif`) for inspection — while the
+  remaining versions still sync and the manifest still describes what is on
+  disk. The upstream images are rolling and Posit changes rserver options
+  between releases (2026.07.0 deprecated `--test-config` and added path
+  validation for `database-config-file`, which the app passes) — previously
+  the first sign of an incompatible image was a user's session timing out at
+  `wait_until_port_used`. `RSTUDIO_SYNC_SMOKE=0` skips the canary.
+  `test/run.sh` gains a parity check that fails if the canary's rserver
+  flags drift from `script.sh.erb`'s — flag names, plus values for the
+  flags whose values are literals (`--www-address=0.0.0.0` being the one
+  that matters).
+
+- Docs: why `install.packages()` can claim a package "is not available" that
+  exists on CRAN — every image's mirror is a dated Posit Package Manager
+  snapshot, permanently so for older R versions (rocker policy). The new
+  section in `docs/images.md` covers the one-off `repos =` override, a
+  two-repo "newest compatible, else era version" default, and renv for
+  projects that must stay stable for years; the README's Known issues points
+  at it.
+- README: the two `ERROR` lines every session logs (the Posit Assistant's
+  Node backend warning about SQLite, and RStudio's memory display reading an
+  already-exited process) are documented as benign. They look alarming, they
+  are not, and they cannot be filtered — RStudio emits them at `ERROR`, above
+  any threshold the app can set — but they now land in a per-session log file
+  instead of the R console (see Fixed).
+- **Copilot CLI's approval flags are documented.** Copilot gates every MCP tool
+  call behind an interactive prompt, so a non-interactive `copilot -p "..."`
+  run against the shipped `.mcp.json` stalls on the first tool call with no way
+  to answer it — Claude Code needs no equivalent flag, so the setup looks
+  broken rather than incomplete. The README, `docs/ai-agents.md` and
+  `rstudio_mcp_init`'s own output now give the launch line
+  (`--allow-tool 'r-session' --allow-tool 'r-session-status'`), the narrower
+  per-tool and `--deny-tool` forms, and the reason to prefer them over
+  `--allow-all-tools`, which also auto-approves Copilot's shell and file-write
+  tools. Verified against Copilot CLI 1.0.78; the flags have changed between
+  releases and nothing here pins a version.
+- **Docs audit before 1.0.** `docs/development.md` still said the rootless
+  `database.conf` / `logging.conf` fixes were pending upstream — they landed in
+  `rstudio-img` v1.1.1, and the app keeps its own compensations only because the
+  images are rolling and an unsynced or third-party `.sif` still needs them. Its
+  sample test output said `38 passed` (69 now) and its example image label was a
+  version old. `docs/images.md`'s pipeline diagram showed only the monthly
+  rebuild, not the weekly RStudio-release gate. `docs/install.md`'s config table
+  was missing `RSTUDIO_APP_DIR` and never explained `RSTUDIO_DEV_CONFIG`, the
+  key its own scratch-run recipe depends on. `sync-images.sh --check` worked but
+  appeared in no `--help` output while the README pointed at it.
+
+### Changed
+
+- **The README is now the short version, and `docs/ai-agents.md` is the long
+  one.** The AI material had grown to a third of the README — most of it
+  mechanism (the single-threaded session, the prompt-deadlock guard and its
+  limits, wedge recovery, the `rstudio_session_status` verdicts, Posit
+  Assistant's credential routes and what is still unverified) that you need
+  only once you are digging in. The README keeps what you need to *use* it:
+  what the three integrations are and how they differ, the launch-form select,
+  the per-project setup with its two restarts, and how to tell it is working.
+  Everything else moved, in full, to the new page.
+
+- Deploys now copy only the app files (OnDemand templates plus
+  `sync-images.sh`, `r-wrappers.sh`, `conf.sh`, `ui.sh`) instead of the whole
+  repo. Repo tooling — installer, tests, docs, release scripts — no longer
+  lands in the app directory, and the next deploy removes the copies that
+  earlier deploys left there. Nothing you use moves: `~/.alias` keeps sourcing
+  `r-wrappers.sh` from the same place, and `sync-images.sh` still runs from
+  the app directory. If you kept a habit of running the deployed `install.sh`,
+  run it from a checkout (or `curl | bash`) instead.
+
+### Fixed
+
+- **`rstudio_session_status` described a verdict it no longer gives.** The
+  tool's own description — the text an agent reads to interpret the result —
+  still said `waiting-timer` meant "a self-clearing `Sys.sleep`/poll", after
+  the verdict was narrowed to a *pure* sleep precisely because a timed poll
+  cannot be told apart from an event loop wedged forever. An agent reading it
+  would have taken "no action needed" from a verdict the code no longer
+  returns for polls. Description and behaviour now agree.
+
+- The image launch canary and the upstream rebuild cadence reached the user
+  docs: `sync_images` can now reject a pulled image, and the README said
+  nothing about it. The README also advised syncing "after the 1st", from
+  before upstream added a rebuild after each stable RStudio release.
+
+- **Session reachability no longer hangs on an unset default.** rserver's
+  `--www-address` was never passed, so every session was reachable from the
+  OnDemand web node only because the default happens to bind all
+  interfaces — a default Posit could move in any release, and the failure
+  would be invisible: rserver starts "healthy", the port opens locally, and
+  no browser can connect. `script.sh.erb` now pins `--www-address=0.0.0.0`,
+  the sync canary passes the same flag, and the canary polls the node's
+  network address rather than loopback — a loopback poll would vouch for an
+  rserver no browser could reach. (Found while debugging the image repo's
+  new launch smoke test against 2026.07.0; the wedge there turned out to be
+  the test harness itself — curl silently failing to write its output into
+  a directory the test had chowned away, not RStudio and not networking —
+  but the exposure it pointed at is real.)
+- RStudio's internal log records no longer print into the R console. The
+  session process forwards its own stderr to the console, and the app's
+  logging override — needed so *server* startup failures reach `output.log` —
+  also pointed the session's logger at stderr, so benign records sprayed into
+  every console, timestamps and all: the memory monitor's `/proc` read races
+  (`Proc stat file … missing value`, a process exiting between enumeration and
+  read) and the Posit Assistant backend's stderr (the SQLite
+  `ExperimentalWarning`, re-logged at `ERROR`). `logging.conf` now defaults
+  *every* logger to a file under `logs/` in the session's OnDemand output
+  directory, with only `rserver` on stderr — so launch failures still reach
+  `output.log`, while every session-side record (including Assistant
+  sub-loggers that a per-`rsession` rule slipped past) stays out of the
+  console and next to `output.log` for debugging.
+
+### Removed
+
+- `form.yml.bak`, the retired hard-coded launch form, is gone from the repo
+  (and from deployed app directories). It lives on in git history.
+
 ## [0.9.7] - 2026-07-14
 
 ### Changed
@@ -166,7 +348,8 @@ became something another person could install.
   are bash-only instead of having `.bashrc` edited pointlessly; an existing
   `r-wrappers.sh` source line is found across chained rc files.
 
-[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v0.9.7...HEAD
+[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/mjz1/rstudio-ood/compare/v0.9.7...v1.0.0
 [0.9.7]: https://github.com/mjz1/rstudio-ood/compare/v0.9.6...v0.9.7
 [0.9.6]: https://github.com/mjz1/rstudio-ood/compare/v0.9.5...v0.9.6
 [0.9.5]: https://github.com/mjz1/rstudio-ood/compare/v0.9.4...v0.9.5

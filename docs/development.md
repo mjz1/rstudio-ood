@@ -1,7 +1,11 @@
 # Developing and deploying
 
 **This repo is not the app directory.** Open OnDemand runs whatever sits in
-`~/ondemand/dev/<app>/`; this repo is the source, and installing is a copy.
+`~/ondemand/dev/<app>/`; this repo is the source, and installing is a copy —
+of the app files only (`APP_FILES` in `install.sh`): the OnDemand templates
+plus the bash files whose runtime home is the deployed directory. Repo
+tooling (installer, tests, docs, release scripts) stays out of the deploy
+target, so the app dir never looks like a checkout.
 This separation exists because the repo *used to be* the sandbox directory, so
 every edit, branch switch and stash was instantly live. If you find yourself
 editing files under `~/ondemand/`, you are editing production — `install.sh`
@@ -43,10 +47,10 @@ dir; sessions and `sync_images` compare that stamp against `main/VERSION`
 update command when they differ. Nothing self-updates — the notice is the whole
 mechanism, and it fires only on releases because only releases move main.
 
-Not every merge to dev needs a release; cut one when the accumulated changes
-are worth downstream installs picking up. During pre-announcement bake-in
-(`0.9.x`), releases are free — the only "user" is the maintainer's own stable
-app.
+Not every merge to dev needs a release — let changes accumulate and cut one
+when the bundle is worth a changelog section, or when something must actually
+reach users. The `[Unreleased]` section of the changelog is where in-flight
+work lives in the meantime.
 
 `--app-only` deliberately skips the interview: redeploying an edit must not be
 able to change your storage or partitions behind your back. The staging copy
@@ -74,7 +78,7 @@ template/script.sh.erb
 view.html.erb
   ok   the password is NEVER the literal string "password"
   ...
-38 passed, 0 failed
+69 passed, 0 failed
 ```
 
 It builds a fixture cluster in a temp directory (images, package libraries,
@@ -97,7 +101,7 @@ staging app.
 ## The form discovers images
 
 `form.yml.erb` globs `rstudio-<minor>.sif`, labels each from `images.json`
-(`R 4.6.1 · RStudio 2026.06.0+242`), and offers only versions whose package
+(`R 4.6.1 · RStudio 2026.07.1+147`), and offers only versions whose package
 library actually exists. Two consequences:
 
 - Adding an R version upstream needs no edit here. Run `sync_images --sync`.
@@ -107,8 +111,8 @@ library actually exists. Two consequences:
   one option pointed at a library directory that did not exist; R ignores a
   missing `R_LIBS_USER` silently, so that failure was invisible.
 
-(`form.yml.bak` is the retired hard-coded form, kept for reference; OnDemand
-reads `form.yml.erb`.)
+(The retired hard-coded form lived at `form.yml.bak` until v0.9.7; it is in the
+git history if you need it. OnDemand reads `form.yml.erb`.)
 
 ## Running rootless: two things the image needs help with
 
@@ -129,16 +133,17 @@ Singularity, and `script.sh.erb` compensates for both:
    a `logging.conf` with `logger-type=stderr` so errors reach the job's
    `output.log`.
 
-The cleaner fix is upstream, in `rstudio-img`'s Dockerfile, after the deb
-install — mirroring what rocker does:
+**Both were fixed upstream in `rstudio-img` v1.1.1**, which now replays the
+fixups after the deb install — it removes the baked `secure-cookie-key`, writes
+`database.conf` `0644`, and ships a `logging.conf` with `logger-type=stderr`
+(`Dockerfile:187-190`). `database.conf` holds only `provider=sqlite`, so
+widening it leaks nothing.
 
-```dockerfile
-RUN chmod 0644 /etc/rstudio/database.conf \
- && rm -f /var/lib/rstudio-server/secure-cookie-key
-```
-
-`database.conf` holds only `provider=sqlite` by default, so widening it to
-world-readable leaks nothing. Until that lands, the workarounds above are what
-make the images usable rootless.
+The app keeps both compensations anyway. They cost nothing, and the images are
+*rolling*: an older `.sif` a lab has not synced yet, or someone else's build,
+still needs them. The trade-off is that a regression upstream would hide behind
+the workaround indefinitely — so if you want to confirm the upstream fix stands
+on its own, drop `--database-config-file` for a single launch rather than
+trusting that it is still redundant.
 
 Back to the [README](../README.md).

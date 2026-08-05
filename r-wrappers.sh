@@ -12,6 +12,8 @@
 #   Rscript_ [-v VERSION] ...     non-interactive R (arguments ARE forwarded)
 #   bash_ [-v VERSION] [args...]  shell inside the container
 #   sync_images [--sync] [ver]    check for / pull newer images
+#   rstudio_slots [--rm|--prune]  inspect / tidy named session slots
+#   rstudio_mcp_init [DIR]        per-project setup for AI agent access (MCP)
 #
 # VERSION is an R minor version (e.g. 4.5) or `latest`. Omit it to get the
 # newest R that has both an image and a populated package library.
@@ -268,6 +270,153 @@ rstudio_slots() {
         *) echo "usage: rstudio_slots [--rm SLOT | --prune]" >&2; return 1 ;;
     esac
     unset -f _is_running
+}
+
+# rstudio_mcp_init [DIR] -- one-time per-project setup for AI agent access.
+#
+# Writes DIR/.mcp.json (default: the current directory) registering an
+# "r-session" MCP server for agents launched there. Claude Code reads .mcp.json
+# natively; the file is plain JSON and committable, so a lab member cloning the
+# project inherits the server. It is deliberately generic: WHICH tools it
+# serves comes from RSTUDIO_MCP_TOOLS, which the session exports per the launch
+# form's "AI agent access" choice -- so the file never needs rewriting, and the
+# form stays in control per session. Outside a session (variable unset) it
+# serves a harmless read-only default; the execute tool (run_r) additionally
+# needs BTW_RUN_R_ENABLED, which only an execute-mode session exports.
+#
+# --no-init-file is LOAD-BEARING, and not an optimisation. A stdio MCP server
+# speaks JSON-RPC over stdout, so ANY R startup chatter on stdout corrupts the
+# protocol -- the client reads a package banner where it expected a handshake
+# and the server never connects. Project .Rprofile files are full of such
+# chatter, and renv is the worst case: on a large project its startup sync
+# check prints "NOTE: Dependency discovery took N seconds..." to stdout AND
+# takes 20+ seconds doing it, blowing the client's 30s connect timeout as well
+# (measured: 32.3s startup, 77k files -- two independent fatal failures).
+# Skipping the profile closes the whole class rather than muting one source.
+#
+# It costs nothing, because the server does not need the project: it defines
+# tools and dials the session's socket. The tools EXECUTE in the R session,
+# which has renv fully loaded. mcptools/btw still resolve because renv exports
+# R_LIBS_USER (the project library) to child processes -- and outside renv,
+# R_LIBS_USER is the session's per-version library. If a project somehow needs
+# its profile, the narrower fix is an "env" block with
+# RENV_CONFIG_SYNCHRONIZED_CHECK=FALSE instead.
+#
+# The server command sources RSTUDIO_MCP_GUARD (template/mcp-guard.R, exported
+# by an execute-mode session) to wrap run_r with the AST gate that refuses
+# session-wedging calls -- see that file and issue #2. Both are read from the
+# ENVIRONMENT, never baked in: the same committed .mcp.json then works for
+# every user and every app version, and the launch form stays in control of
+# what a session actually exposes. GUARD unset means no wrapping (a read-only
+# session exports none and has no run_r to guard) -- but set-and-MISSING is a
+# broken deploy, and the command stop()s rather than silently serving an
+# unguarded run_r; the error lands on stderr, which is safe for a stdio MCP
+# server (only stdout carries JSON-RPC). RSTUDIO_MCP_TOOLS set-but-EMPTY falls
+# back to the read default in R, deliberately: Sys.getenv()'s fallback applies
+# only when a variable is UNSET, and btw_tools() with no names serves btw's
+# ENTIRE default set -- files/git/web tools included.
+
+# The one and only copy of the server entries: printed for paste-by-hand and
+# embedded by the write path below, so the two can never drift. TWO servers,
+# deliberately: once the primary (r-session) connects to a session, mcptools
+# forwards EVERY tool call there -- so a status tool it served would queue
+# behind the very wedge it diagnoses. r-session-status runs with
+# session_tools = FALSE (tools execute in its own process) and reads /proc,
+# which works precisely when the session is unresponsive.
+_rstudio_mcp_entries() {
+    cat <<'ENTRY'
+    "r-session": {
+      "command": "Rscript",
+      "args": [
+        "--no-init-file",
+        "-e",
+        "local({ tl <- Sys.getenv('RSTUDIO_MCP_TOOLS'); if (!nzchar(tl)) tl <- 'env,docs,sessioninfo'; t <- do.call(btw::btw_tools, as.list(Filter(nzchar, strsplit(tl, ',')[[1]]))); g <- Sys.getenv('RSTUDIO_MCP_GUARD'); if (nzchar(g)) { if (!file.exists(g)) stop('RSTUDIO_MCP_GUARD is set but the file is missing (broken deploy?): ', g); source(g, local = TRUE); t <- guard_btw_tools(t) }; mcptools::mcp_server(tools = t) })"
+      ]
+    },
+    "r-session-status": {
+      "command": "Rscript",
+      "args": [
+        "--no-init-file",
+        "-e",
+        "local({ g <- Sys.getenv('RSTUDIO_MCP_GUARD'); if (!nzchar(g)) stop('not inside an agent-enabled RStudio session (RSTUDIO_MCP_GUARD unset)'); if (!file.exists(g)) stop('RSTUDIO_MCP_GUARD is set but the file is missing (broken deploy?): ', g); source(g, local = TRUE); mcptools::mcp_server(tools = list(rstudio_session_status()), session_tools = FALSE) })"
+      ]
+    }
+ENTRY
+}
+
+rstudio_mcp_init() {
+    local dir="${1:-.}" f
+    [ -d "$dir" ] || { echo "no such directory: $dir" >&2; return 1; }
+    f="$dir/.mcp.json"
+    if [ -e "$f" ]; then
+        if grep -q '"r-session"' "$f" 2>/dev/null; then
+            # "Has an r-session server" is not "has the CURRENT one". A file
+            # written before the guard existed serves an UNGUARDED run_r
+            # forever -- and .mcp.json is committable, so a stale copy
+            # propagates to everyone who clones the project. Detect the guard
+            # by its function name and say exactly what to do.
+            if grep -q 'guard_btw_tools' "$f" 2>/dev/null &&
+               grep -q '"r-session-status"' "$f" 2>/dev/null; then
+                echo "already configured: $f (r-session + status servers, run_r guard wired)"
+                # Re-running an idempotent command usually means "it isn't
+                # working". The two answers are both restarts (see below), so
+                # say them here rather than only on the write path -- this is
+                # the moment the user is actually looking.
+                echo "  not seeing your session? both halves are read only at STARTUP:"
+                echo "  restart R if mcptools was installed after the session began,"
+                echo "  and restart the agent if it was running before this file existed."
+                return 0
+            fi
+            {
+                echo "$f has an \"r-session\" server from an OLDER app version"
+                echo "(missing the run_r deadlock guard and/or the session-status server)."
+                echo "Replace the \"r-session\" entry with BOTH of:"
+                _rstudio_mcp_entries
+            } >&2
+            return 1
+        fi
+        # Never rewrite a file another tool owns half of: merging JSON in bash
+        # is how files get corrupted. Print the EXACT entry to paste instead --
+        # a "see the source" pointer here is useless at the moment it appears.
+        {
+            echo "refusing to modify existing $f -- paste this into its \"mcpServers\" object:"
+            _rstudio_mcp_entries
+        } >&2
+        return 1
+    fi
+    {
+        echo '{'
+        echo '  "mcpServers": {'
+        _rstudio_mcp_entries
+        echo '  }'
+        echo '}'
+    } > "$f"
+    echo "wrote $f"
+    # Both halves of the setup are read exactly ONCE, at startup: the session
+    # registers with mcptools from its rstudio.sessionInit hook, and the agent
+    # reads .mcp.json when it launches. So installing the packages into an
+    # already-running session, or writing this file beside an already-running
+    # agent, changes nothing until each is restarted -- and NEITHER failure
+    # announces itself: an MCP server that finds no session to connect to
+    # answers from its own empty process instead of erroring. Spelling out the
+    # restarts costs three lines here and saves the silent-empty-environment
+    # debugging session that first-time setup otherwise produces.
+    if [ -z "${RSTUDIO_MCP_ACCESS:-}" ]; then
+        echo "  NOTE: this shell is not inside an agent-enabled session -- launch one with"
+        echo "        'AI agent access' set on the form (the file is ready for it)."
+    fi
+    echo "  1. install the R packages into this project's library:  install.packages(c('mcptools','btw'))"
+    echo "  2. if you installed them just now, restart R (Session > Restart R): the session"
+    echo "     registers with mcptools only at startup, so it is NOT registered yet. You are"
+    echo "     registered once the console prints '-- MCP: agents in this session's terminal ... --'"
+    echo "  3. run your agent from this directory in the session's Terminal:"
+    echo "       claude"
+    echo "       copilot --allow-tool 'r-session' --allow-tool 'r-session-status'"
+    echo "     copilot prompts for approval on EVERY MCP call, so a non-interactive"
+    echo "     'copilot -p ...' run stalls on the first one without those flags."
+    echo "     (--allow-all-tools also works, but auto-approves copilot's own shell and"
+    echo "      file-write tools -- prefer naming the servers. See docs/ai-agents.md.)"
+    echo "     An agent that was ALREADY running has not read this file -- restart it too."
 }
 
 update_r() {

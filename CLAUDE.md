@@ -48,10 +48,16 @@ an unreleased commit in every future user's install. Therefore:
   (dev or a feature branch) as its own staging app; stable (`rstudio_dev`)
   deploys from main
   (`git switch main && ./install.sh --app-only && git switch dev`).
-- **Versioning**: pre-announcement bake-in lives on `0.9.x` -- release
-  liberally, they are free while the user base is one person. `v1.0.0` is the
+- **Versioning**: pre-announcement bake-in lives on `0.9.x`; `v1.0.0` is the
   announcement to the lab itself. After that, bump when downstream installs
   should update (the notice fires on any VERSION difference).
+- **Let changes ACCUMULATE on dev; a release is a meaningful bundle, not a
+  reflex.** Do not cut a release per change -- v0.9.1..v0.9.7 landed in one
+  evening, one of them for a single link attribute, and that is version-number
+  spam (maintainer's words: "ridiculous"). Commit to dev, stage if it needs a
+  test launch, and release when there is a coherent set worth a changelog
+  section -- or when something must actually reach stable/users. Demos are not
+  a reason to release.
 - **Every user-visible change adds a `CHANGELOG.md` [Unreleased] entry in the
   same commit** (Added / Changed / Fixed / Removed). This is not bookkeeping:
   the update notice tells users a new version exists, and the changelog is the
@@ -307,10 +313,23 @@ interchangeable. Consequently:
 `sync-images.sh` records the registry manifest digest of each `.sif` in a
 `.digest` sidecar, so staleness is detected with HTTP HEAD requests rather than a
 multi-GB download. The upstream repo (`mjz1/rstudio-img`) rebuilds its rolling
-`4.3`–`4.6` tags monthly, so **an image can change under a stable filename**.
+`4.3`–`4.6` tags monthly — plus within a week of any new stable RStudio
+Server release (gated weekly cron) — so **an image can change under a stable
+filename**, and the RStudio Server inside it can jump versions.
 
 - The previous build is retained as `rstudio-<ver>.sif.prev` (a hardlink, so it
   costs nothing until the new image lands). Rollback is a rename.
+- **A pulled image must pass a launch canary before it replaces the live one**
+  (`smoke_launch` in sync-images.sh): rserver starts under singularity on the
+  pulling node with script.sh.erb's exact flag set and must serve its sign-in
+  page. rserver dies on an unknown option, so a Posit release that drops a
+  flag the app passes fails in the sync log instead of as a user's session
+  stuck at `wait_until_port_used`. The flag list is a deliberate second copy
+  of script.sh.erb's; `test/run.sh` diffs the two and fails on drift.
+  `RSTUDIO_SYNC_SMOKE=0` is the escape hatch when the canary itself is the
+  thing that is wrong. Upstream also smoke-tests every publish under docker
+  (including the same flag set), but only this canary exercises singularity
+  and this cluster's environment.
 - `images.json` records digest, R/RStudio/Quarto versions and pull time for every
   image, so you can reconstruct what an analysis ran under.
 - What actually moves between rebuilds is *not* mostly R. One rebuild took

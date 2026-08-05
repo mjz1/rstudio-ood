@@ -12,8 +12,9 @@ behave exactly as before, so trying it risks nothing.
   everything here is active only inside this app's sessions and wrappers
   ([the guarantee](docs/install.md#what-it-does-not-touch--the-coexistence-guarantee)).
   Uninstalling is deleting a config file and an app directory.
-- **Current R and RStudio** — images (R 4.3–4.6) rebuilt monthly upstream;
-  one command syncs them, and rollback to the previous build is a rename.
+- **Current R and RStudio** — images (R 4.3–4.6) rebuilt upstream monthly and
+  after each RStudio release; one command syncs them, a new image must pass a
+  launch test before it goes live, and rollback is a rename.
 - **Named concurrent sessions** — one per project, each resuming its own state;
   labelled in the form, in `squeue`, and on the session card.
 - **Lab-shared images** — one person maintains them, everyone else reads them;
@@ -129,35 +130,58 @@ build first, `torch::install_torch(reinstall = TRUE)` once. How `--nv`, `--gres`
 and the CUDA pick actually work: [docs/images.md](docs/images.md) and the
 comments in `template/script.sh.erb`.
 
-**AI assistance (Copilot / Posit Assistant).** The image enables two *separate*
-integrations, and they are not the same thing:
+**AI features.** Three separate integrations, easily confused — they differ in
+where the model runs and what it can see:
 
-- **GitHub Copilot** (`copilot-enabled=1`) — RStudio's built-in inline
-  completions, backed by the bundled `copilot-language-server`. Sign in under
-  **Tools → Global Options → Copilot** with your GitHub account. If your
-  institution provides Copilot (MSK does), **this needs no extra credentials
-  and no spend — verified working here** for inline completion.
-- **Posit Assistant** (`posit-assistant-enabled=1`) — the newer chat/agent pane.
-  It prompts to install, then reports *"unable to connect"*, because it is a
-  **hosted commercial service**: the backend talks to `gateway.posit.ai`
-  (running `claude-sonnet-4-5`) and needs credentials the image cannot supply.
-  Two routes exist:
-  - **Bring your own key** (0.7.7+): the backend reads `ANTHROPIC_API_KEY` and
-    persists settings in `~/.posit/assistant/settings.json` — under `$HOME`, so
-    a key set once applies to every session and slot. Set it in the pane's
-    settings, or in `~/.Renviron` (`chmod 600` it). Billed to *your* Anthropic
-    account.
-  - **Posit's AI service** — sign in from the pane; needs a Posit account with
-    Assistant access. Untested here, and OAuth callbacks through OnDemand's
-    `/rnode/…` proxy are a plausible snag.
+- **GitHub Copilot** — RStudio's built-in inline completions, enabled in the
+  image. Sign in under **Tools → Global Options → Copilot**. If your institution
+  provides Copilot (MSK does), this needs no extra credentials and no spend, and
+  it is **verified working here**.
+- **Posit Assistant** — the chat pane. It starts, then reports *"unable to
+  connect"*: it is a hosted commercial service needing credentials the image
+  cannot supply. You can bring your own `ANTHROPIC_API_KEY` or sign in to
+  Posit's service; either way it is billed to you.
+- **AI agent access (MCP)** — lets a coding agent *you* run in the session's
+  Terminal (Claude Code, Copilot CLI, any MCP client) see and drive the **live R
+  session**: list your loaded objects, describe a data frame in memory, read
+  package docs, and — in **Read + execute** mode — run R in your session against
+  your loaded state, so it can build a notebook chunk by chunk instead of
+  re-rendering to find each bug. Off by default; turn it on with **AI agent
+  access** on the launch form.
 
-  An institutional **GitHub Copilot subscription backs Posit Assistant in
-  Positron**; whether RStudio Server can use Copilot as the Assistant's backend
-  is **unverified** — if it can, that is the ideal route (no per-token spend,
-  institutional identity). Until someone confirms it, native Copilot above is
-  the working AI feature and the Assistant pane is decoration. Nothing in this
-  app blocks any of it: the backend starts cleanly, the image ships node, and
-  compute nodes reach both gateways.
+MCP takes one setup, per project, in a session launched Read-only or
+Read + execute:
+
+```r
+install.packages(c("mcptools", "btw"))   # into the project library
+```
+
+```bash
+rstudio_mcp_init            # writes ./.mcp.json (committable; the lab inherits it)
+claude                      # or your agent, run from the project in the Terminal
+```
+
+**Expect two restarts the first time, because nothing prompts you for them.**
+Both halves are read once, at startup: the session registers with `mcptools`
+when it starts, and your agent reads `.mcp.json` when it launches. So after that
+first `install.packages()`, do **Session → Restart R**; and if your agent was
+already running when you ran `rstudio_mcp_init`, quit and relaunch it. Skipping
+either fails *silently* — an MCP server with no session to connect to answers
+from its own empty process — so verify once by asking the agent to list your
+objects.
+
+**Copilot CLI additionally needs its approvals declared**: it prompts on every
+MCP tool call, so `copilot -p "..."` stalls on the first one unless you launch
+it as `copilot --allow-tool 'r-session' --allow-tool 'r-session-status'`.
+Prefer that to `--allow-all-tools`, which also auto-approves Copilot's own shell
+and file-write tools. Claude Code needs no such flag.
+
+Two things to know before using execute mode: you and the agent share one
+single-threaded R session (calls serialize, side effects are shared), and agent
+code that stops to **ask a question** would wedge that session — guarded here,
+but the guard has limits. All three integrations in full, what is verified and
+what is not, the guard and how to recover a wedge, and the
+`rstudio_session_status` tool: **[docs/ai-agents.md](docs/ai-agents.md)**.
 
 **Shell wrappers.** The same images and libraries from a terminal:
 
@@ -187,7 +211,7 @@ hard error, because R would ignore it silently.
 sync_images                  # check; on a terminal, offers to pull if stale
 sync_images --sync           # pull whatever is stale (submits an sbatch job)
 sync_images --watch          # follow the running/submitted sync job's log
-sync_images --help           # the rest (--local, --image-dir, --manifest)
+sync_images --help           # the rest (--check, --local, --image-dir, --manifest)
 ```
 
 Every run says where it operates (your `RSTUDIO_IMAGE_DIR` — never the current
@@ -210,7 +234,18 @@ When something is stale, the run ends with the offer:
 ```
 
 There is no automation on purpose (the reference cluster has no cron); upstream
-rebuilds its rolling tags monthly, so run `sync_images` some time after the 1st.
+rebuilds its rolling tags monthly and again within a week of each stable RStudio
+Server release, so run `sync_images` every few weeks rather than on a date.
+
+**A pulled image has to prove it launches before it replaces the live one.**
+The sync starts `rserver` from the candidate on the pulling node and requires a
+sign-in page; a candidate that fails leaves your current image untouched, is
+kept as a `.rejected.sif` file for inspection, and is reported in the sync log,
+while the other versions still update. Since the images are rolling
+and RStudio changes its options between releases, this is the difference between
+a red line in a log and a lab whose sessions all time out. `RSTUDIO_SYNC_SMOKE=0`
+skips it if the check itself is what's wrong.
+
 The previous build of every image is retained — **rollback is a rename**. That,
 the registry/digest architecture, and what actually changes between rebuilds:
 **[docs/images.md](docs/images.md)**.
@@ -218,14 +253,36 @@ the registry/digest architecture, and what actually changes between rebuilds:
 ## Developing it
 
 This repo is **not** the app directory: OnDemand runs `~/ondemand/dev/<app>`,
-and `./install.sh --app-only` deploys the checkout there. Deploy a second copy
-under another name to get a staging app, and run `./test/run.sh` (38
-assertions; renders every ERB template against a fixture cluster, no ruby on
-the cluster required) before you do. The workflow, the staging pattern, and how
-the test suite works: **[docs/development.md](docs/development.md)**.
+and `./install.sh --app-only` deploys the checkout there. Test a branch by
+staging it as its own app (`./stage.sh`) rather than on the one your lab uses,
+and run `./test/run.sh` before you deploy. The workflow, the staging pattern,
+and how the test suite works: **[docs/development.md](docs/development.md)**.
 
 ## Known issues
 
+- **`ERROR` lines in the session's `logs/` directory are usually benign.** Two
+  appear routinely, and neither means anything went wrong:
+  - `ExperimentalWarning: SQLite is an experimental feature …` — the Posit
+    Assistant's Node backend prints this as it starts, and RStudio logs
+    *anything* that backend writes as an `ERROR`, warnings included.
+  - `Proc stat file: /proc/<pid>/status missing value — found only: 0 of: 2
+    keys` — RStudio's memory-usage display asks a process how much RAM it is
+    using a moment after that process has already exited. Harmless by
+    definition, and recurring: the monitor polls for as long as the session
+    runs.
+
+  They cannot be turned *down* — RStudio emits them at `ERROR`, above any log
+  threshold the app can set — but they are turned *aside*: `logging.conf`
+  defaults every logger to a file under `logs/` (next to `output.log`), so the
+  session's records never reach the R console. Only `rserver` is routed to
+  stderr, so a session that *genuinely* fails to start still surfaces — its
+  startup errors go to `output.log`.
+- **`install.packages()` says a package "is not available" that clearly exists
+  on CRAN.** Older R images pin their CRAN mirror to a dated snapshot from
+  that R version's era (deliberate; the newest image tracks current CRAN), so
+  packages released after that date are invisible there. The fix is one `repos =`
+  argument; the whys and the durable options:
+  **[docs/images.md](docs/images.md#installing-packages-the-cran-mirror-is-snapshot-pinned)**.
 - **Resuming a suspended session can complain `Package 'X' version Y cannot be
   unloaded`.** RStudio restores the suspended R state before renv re-asserts
   the project library, so packages load from your user library first and renv
@@ -235,10 +292,9 @@ the test suite works: **[docs/development.md](docs/development.md)**.
   the right versions cleanly. Idle-suspension is now disabled (sessions own a
   dedicated allocation, so hibernating saves nothing), which removes most
   occurrences; a resume after a relaunch can still hit it once.
-- **Fixed (2026-07): the session password used to be the literal string
-  `password`**, which let any user on the cluster sign into your session (the
-  rserver port is reachable from other nodes and usernames are public in
-  `squeue`). The random password is now kept, and the session card shows the
-  credentials for the rare manual sign-in. Sessions launched by an older copy of
-  the app keep the weak password until relaunched; if idle logouts recur, the
-  knob is `--auth-timeout-minutes` in `script.sh.erb`, never the password.
+- **Sessions launched by a pre-2026-07 copy of the app use a weak, guessable
+  password until relaunched** — relaunch them. Current versions keep the random
+  per-session password (the session card shows it for the rare manual sign-in).
+  If idle logouts ever recur, the knob is `--auth-timeout-minutes` in
+  `script.sh.erb` — never the password; the history is in the
+  [changelog](CHANGELOG.md).

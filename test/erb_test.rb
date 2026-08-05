@@ -195,6 +195,11 @@ check('a slot directory with quotes in its name does not break the form YAML') d
   # hostile directory present; also confirm the entry round-tripped intact.
   form.dig('attributes', 'session_name', 'options').map(&:last).include?(HOSTILE_SLOT)
 end
+check('AI agent access is a three-way select defaulting to Off') do
+  a = form.dig('attributes', 'agent_access')
+  a && a['value'] == 'off' &&
+    (a['options'] || []).map(&:last).sort == %w[execute off read]
+end
 
 # The form must show the notice when a session has cached one. Rendered with HOME
 # redirected so the fixture's cache file is the one it finds.
@@ -283,6 +288,21 @@ check('update NOTICE: non-blocking version check, surfaced in the R banner, neve
     sh.include?('What changed:') &&                              # banner links the changelog
     !sh.match?(/git pull|--app-only[^"]*\|\s*bash.*<%/)         # no self-update machinery
 end
+check('logging defaults to a session-dir file; ONLY rserver keeps stderr (output.log)') do
+  # rsession forwards its own stderr into the R console after startup, so ANY
+  # rsession-side logger on stderr reaches the user -- the /proc-race monitor
+  # AND the Posit Assistant's onStderr re-logging. File must therefore be the
+  # DEFAULT, not a per-[rsession] carve-out that sub-loggers slip past. rserver
+  # is the one exception: startup failures must reach output.log (no syslog).
+  logconf = sh[/cat > "\$\{TMPDIR\}\/logging\.conf" <<LOGCONF\n(.*?)\nLOGCONF/m, 1].to_s
+  logconf.include?("[*]\nlog-level=warn\nlogger-type=file") &&
+    logconf.include?('log-dir=${SESSION_DIR}/logs') &&
+    logconf[/\[rserver\].*?logger-type=(\w+)/m, 1] == 'stderr' &&
+    # the default must NOT be stderr, or sub-loggers leak to the console again
+    !logconf.match?(/\[\*\]\nlog-level=warn\nlogger-type=stderr/) &&
+    sh.include?('mkdir -p "${SESSION_DIR}/logs"') &&
+    sh.include?('SESSION_DIR="${PWD}"')
+end
 check('idle-suspend is disabled (dedicated allocation; suspension only races renv)') do
   sh.include?('session-timeout-minutes=0') &&
     sh.include?('rsession.conf:/etc/rstudio/rsession.conf')
@@ -305,6 +325,182 @@ check('GPU: --nv is gated on Slurm granting a GPU, never on /dev/nvidia*') do
   # probe /dev/nvidia*, and a naive substring match hits that explanation.
   code = sh.each_line.reject { |l| l.strip.start_with?('#') }.join
   code.include?('CUDA_VISIBLE_DEVICES') && code.include?('SLURM_JOB_GPUS') && !code.include?('/dev/nvidia')
+end
+
+# --- AI agent access (MCP) ---
+# Three-way form select: off (default) | read | execute. The wrapper exports are
+# the contract: the site-profile hook and the agent's MCP server both read them.
+
+check('agent access defaults OFF: the wrapper exports nothing MCP-related') do
+  # The site profile always CONTAINS the env-gated hook (it is a static file);
+  # what must be absent in an Off session is the exports that would arm it.
+  !sh.include?('export RSTUDIO_MCP_ACCESS') && !sh.include?('export BTW_RUN_R_ENABLED') &&
+    !sh.include?('RSTUDIO_MCP_GUARD')
+end
+
+mcp_exec = render(script_erb, context_for(
+  rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+  session_name: 'default', new_session_name: '', agent_access: 'execute'
+).instance_eval { context = self; binding })
+File.write(File.join(OUT, 'script-mcp.sh'), mcp_exec)   # run.sh bash-parses this too
+
+check('execute mode: wrapper exports the mode, the execute tools (run_r + pkg), and btw\'s gate') do
+  mcp_exec.include?('export RSTUDIO_MCP_ACCESS="execute"') &&
+    mcp_exec.match?(/export RSTUDIO_MCP_TOOLS="[A-Za-z0-9_,]*,run_r,pkg"/) &&
+    mcp_exec.include?('export BTW_RUN_R_ENABLED="true"')
+end
+check('the site profile registers the session via the rstudio.sessionInit hook (fires after renv)') do
+  mcp_exec.include?('rstudio.sessionInit') && mcp_exec.include?('mcptools::mcp_session()')
+end
+check('execute mode disarms the hookable prompts that would deadlock the session') do
+  mcp_exec.include?('needs.promptUser = FALSE') &&
+    mcp_exec.include?('renv.consent     = TRUE') &&
+    mcp_exec.include?('askYesNo = function(msg, ...)')
+end
+# The AST gate must be anchored to the STAGING dir. app_dir would point at the
+# stable app for every staged app (they share one config), resolving to a
+# missing file and silently serving an UNGUARDED run_r. The negative clause
+# checks against the FIXTURE's app dir (APPDIR) -- a hard-coded
+# "ondemand/dev/rstudio_dev" pattern could never fire here, because the
+# hermetic fixture's app dir doesn't contain that path.
+check('execute mode points the MCP guard at the staged copy, never at app_dir') do
+  mcp_exec.include?('export RSTUDIO_MCP_GUARD="${SESSION_DIR}/mcp-guard.R"') &&
+    !mcp_exec.match?(/RSTUDIO_MCP_GUARD="#{Regexp.escape(APPDIR)}/)
+end
+
+mcp_read = render(script_erb, context_for(
+  rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+  session_name: 'default', new_session_name: '', agent_access: 'read'
+).instance_eval { context = self; binding })
+check('read mode: no run_r or pkg in the tool list, and btw\'s gate closed EXPLICITLY') do
+  mcp_read.include?('export RSTUDIO_MCP_ACCESS="read"') &&
+    !mcp_read.match?(/export RSTUDIO_MCP_TOOLS="[^"]*run_r/) &&
+    !mcp_read.match?(/export RSTUDIO_MCP_TOOLS="[^"]*,pkg/) &&
+    # an explicit false, not absence: btw serves an explicitly NAMED run_r
+    # with the var unset (match_mode = "explicit"), so absence is not safety
+    mcp_read.include?('export BTW_RUN_R_ENABLED="false"') &&
+    !mcp_read.include?('export BTW_RUN_R_ENABLED="true"')
+end
+# Read mode has no run_r, so it gets no AST gate. The gate is ERB-gated and
+# really is absent; the prompt-disarming is not -- the site profile is a STATIC
+# heredoc gated at RUNTIME on RSTUDIO_MCP_ACCESS, so its text renders in every
+# mode and simply never executes here. Assert each where it actually lives,
+# or the test lies about which mechanism protects read mode.
+# Read mode exports the guard PATH too -- not for wrapping (it serves no
+# run_r; nothing gets wrapped) but because mcp-guard.R also defines the
+# session_status tool, whose server needs the file in every agent mode.
+check('read mode ships the guard path for session_status, with btw\'s gate still closed') do
+  mcp_read.include?('export RSTUDIO_MCP_GUARD="${SESSION_DIR}/mcp-guard.R"') &&
+    mcp_read.include?('export BTW_RUN_R_ENABLED="false"')
+end
+check('the prompt-disarming is runtime-gated on execute, so read mode never applies it') do
+  mcp_read.include?('needs.promptUser') &&                      # static text: present
+    mcp_read.include?('if (identical(mode, "execute")) {')      # but gated at runtime
+end
+
+mcp_evil = render(script_erb, context_for(
+  rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+  session_name: 'default', new_session_name: '', agent_access: 'execute"; rm -rf /'
+).instance_eval { context = self; binding })
+check('an unrecognised agent_access value is allowlisted down to Off, never interpolated') do
+  !mcp_evil.include?('export RSTUDIO_MCP_ACCESS') && !mcp_evil.include?('rm -rf')
+end
+
+# btw's BTW_RUN_R_ENABLED only gates its DEFAULT tool set -- a list that NAMES
+# run_r is served regardless (match_mode = "explicit", btw 1.3.0). So read-only
+# needs two mechanisms and both get asserted: the execute tools are FILTERED
+# out of the list even when config injects them, and the env var is exported
+# as an explicit "false", not left absent.
+check('read mode strips run_r/pkg injected via config, and closes btw\'s gate explicitly') do
+  conf_run_r = File.join(FIX, 'config-run-r')
+  File.write(conf_run_r, File.read(CONFIG) + "RSTUDIO_MCP_TOOLS=env,docs,run_r,pkg\n")
+  begin
+    ENV['RSTUDIO_DEV_CONFIG'] = conf_run_r
+    injected = render(script_erb, context_for(
+      rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+      session_name: 'default', new_session_name: '', agent_access: 'read'
+    ).instance_eval { context = self; binding })
+  ensure
+    ENV['RSTUDIO_DEV_CONFIG'] = CONFIG
+  end
+  injected.include?('export RSTUDIO_MCP_TOOLS="env,docs"') &&
+    injected.include?('export BTW_RUN_R_ENABLED="false"')
+end
+check('a config tool list that scrubs to empty falls back to the read default, not btw\'s full set') do
+  conf_junk = File.join(FIX, 'config-junk-tools')
+  File.write(conf_junk, File.read(CONFIG) + "RSTUDIO_MCP_TOOLS=!!!\n")
+  begin
+    ENV['RSTUDIO_DEV_CONFIG'] = conf_junk
+    junk = render(script_erb, context_for(
+      rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),
+      session_name: 'default', new_session_name: '', agent_access: 'read'
+    ).instance_eval { context = self; binding })
+  ensure
+    ENV['RSTUDIO_DEV_CONFIG'] = CONFIG
+  end
+  junk.include?('export RSTUDIO_MCP_TOOLS="env,docs,sessioninfo,ide"')
+end
+check('every agent-enabled mode warns in output.log when the staged guard file is missing') do
+  mcp_exec.include?('run_r would be UNGUARDED') &&
+    mcp_read.include?('run_r would be UNGUARDED') &&   # read needs the file too (session_status)
+    !sh.include?('run_r would be UNGUARDED')           # Off ships nothing MCP
+end
+
+# ------------------------------------------------- the guard artifact itself --
+# The suite cannot run R, but it CAN assert the artifact exists and is wired --
+# which is exactly what "delete mcp-guard.R and strip the wiring" gets past
+# text-only template assertions (tried: 61 passed with the feature gone).
+
+guard_src = File.join(APP, 'template', 'mcp-guard.R')
+check('mcp-guard.R ships in template/ and defines guard_btw_tools + session_status') do
+  File.exist?(guard_src) &&
+    File.read(guard_src).include?('guard_btw_tools <- function') &&
+    File.read(guard_src).include?('S7::S7_data') &&
+    File.read(guard_src).include?('rstudio_session_status <- function') &&
+    File.read(guard_src).include?('.run_r-inflight') &&  # sentinel both sides read
+    File.read(guard_src).include?('busy-subprocess') &&  # the system()-call verdict
+    File.read(guard_src).include?('waiting-timer') &&    # Sys.sleep vs wedge, via
+    File.read(guard_src).include?('/syscall') &&         # /proc/<pid>/syscall
+    File.read(guard_src).include?('indefinite-wait') &&  # infinite poll != self-clearing
+    File.read(guard_src).include?('0xffffffff')          # 32-bit -1 timeout guard
+end
+check('the wrapper exports the rsession pid for session_status (deferred, not the writer\'s pid)') do
+  # The rendered BATCH script must carry the ESCAPED \$\$: the heredoc
+  # unescapes it when the batch script writes the wrapper, and the wrapper
+  # execs rsession, so at wrapper RUN time $$ is the rsession pid. An
+  # unescaped $$ here would expand at heredoc-WRITE time to the batch
+  # script's pid -- always wrong, and a bash parse would never notice.
+  mcp_exec.include?('export RSTUDIO_SESSION_PID="\$\$"') &&
+    mcp_read.include?('export RSTUDIO_SESSION_PID="\$\$"') &&
+    !sh.include?('RSTUDIO_SESSION_PID')
+end
+check('the guard knows the measured hazards, including the base-R modal') do
+  g = File.read(guard_src)
+  %w[readline browser file.choose showQuestion getPass locator].all? { |h| g.include?(h) }
+end
+
+wrappers_src = File.read(File.join(APP, 'r-wrappers.sh'))
+check('the server commands live in ONE function (write path and snippet cannot drift)') do
+  # two servers, each with one mcp_server call, both inside the single
+  # _rstudio_mcp_entries heredoc -- and nowhere else in the file
+  entry = wrappers_src[/cat <<'ENTRY'\n(.*?)\nENTRY/m, 1].to_s
+  wrappers_src.scan('mcptools::mcp_server').length == 2 &&
+    entry.scan('mcptools::mcp_server').length == 2 &&
+    wrappers_src.scan("<<'ENTRY'").length == 1
+end
+check('the .mcp.json entries are valid JSON and wire both servers with their failure modes') do
+  entry = wrappers_src[/cat <<'ENTRY'\n(.*?)\nENTRY/m, 1]
+  next false unless entry
+  doc = JSON.parse("{\n  \"mcpServers\": {\n#{entry}\n  }\n}")
+  cmd = doc.dig('mcpServers', 'r-session', 'args', 2).to_s
+  status = doc.dig('mcpServers', 'r-session-status', 'args', 2).to_s
+  cmd.include?('RSTUDIO_MCP_GUARD') &&        # sources the gate
+    cmd.include?('guard_btw_tools(') &&       # and applies it
+    cmd.include?('broken deploy') &&          # stop()s on set-but-missing
+    cmd.include?("if (!nzchar(tl)) tl <- 'env,docs,sessioninfo'") &&  # empty != unset
+    status.include?('rstudio_session_status()') &&
+    status.include?('session_tools = FALSE') &&   # server-side, or it queues behind the wedge
+    status.include?('broken deploy')
 end
 
 # The slot becomes a path component. It must not be able to escape the sessions

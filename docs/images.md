@@ -8,7 +8,8 @@ builds images; it only consumes them.
 ```
   rstudio-img (GitHub Actions)         registry              this cluster
   ────────────────────────────         ────────              ────────────
-  monthly rebuild + on release  ──►  :4.3 :4.4               sync-images.sh
+  monthly rebuild, weekly gate  ──►  :4.3 :4.4        sync-images.sh + canary
+  on a new RStudio, on release
                                      :4.5 :4.6  ──digest──►  rstudio-<ver>.sif
                                      :latest                 rstudio-<ver>.sif.digest
                                                              images.json
@@ -62,6 +63,36 @@ sync_images --manifest
 `images.json` records the digest, R, RStudio and Quarto versions, and pull time
 of every image, so you can always reconstruct what a given analysis ran under.
 
+**The launch canary: a candidate must start before it goes live.** After a pull
+and before the new `.sif` replaces the current one, `sync-images.sh` runs
+`smoke_launch`: `rserver` is started from the candidate under singularity, on
+the pulling node, with **the same flag set `script.sh.erb` uses**, and must
+serve its sign-in page on the node's network address.
+
+The failure it exists to catch is specific. The tags are rolling, and Posit
+changes `rserver`'s options between releases — 2026.07.0 deprecated
+`--test-config` and added path validation for `database-config-file`, an option
+this app passes explicitly — and `rserver` dies on an unknown option. Without
+the canary, the first sign of an incompatible image is a user's session timing
+out at `wait_until_port_used`, for the whole lab at once, on an image that has
+already overwritten the good one.
+
+- A rejected candidate is renamed `.rejected.sif` (kept for inspection; delete
+  it once you have looked) and the live image is left **untouched**.
+- One version failing does not abandon the others: the remaining versions still
+  pull, the `latest` symlink and `images.json` are still rebuilt for what did
+  promote, and the run exits nonzero naming the rejected versions.
+- The canary's flag list is a deliberate second copy of `script.sh.erb`'s.
+  `test/run.sh` extracts both and fails on drift — names, plus values for the
+  flags whose values are literals (`--www-address=0.0.0.0` being the one that
+  matters, since it decides whether the web node can reach a session at all).
+- `RSTUDIO_SYNC_SMOKE=0` skips it — the escape hatch for when the canary itself
+  is the broken thing.
+
+Upstream also smoke-tests every publish under docker with the same flags, but
+only this canary exercises **singularity**, on this cluster, where the host
+environment leaks in and rootless is not optional.
+
 **What actually moves between rebuilds.** R's patch version is the *least*
 significant thing here — the package ABI is stable within a minor version, so
 your `4.5_singularity` library keeps working across 4.5.1 → 4.5.2. What moves
@@ -70,5 +101,63 @@ on every build (one rebuild took it from 2025.09.2 to 2026.06.0), and the
 rocker base pins CRAN to a *dated* snapshot whose date advances when rocker
 rebuilds, shifting every package version in the image's site library. Your
 personal library shadows the site library, which insulates you from most of that.
+
+## Installing packages: the CRAN mirror is snapshot-pinned
+
+Every image's default CRAN repository is a [Posit Package Manager](https://p3m.dev)
+snapshot **frozen at a date from that R version's era** — check yours with
+`getOption("repos")`. The newest image is the exception: its mirror is the
+rolling `latest`, so it simply tracks current CRAN. Older images are pinned
+*permanently* to the date their R version stopped being current (R 4.3 →
+April 2024): that is rocker's policy, inherited through the base image, and a
+rebuild does not move it.
+
+This is deliberate, and usually what you want. A snapshot is a self-consistent
+universe — every package version in it was built against its contemporaries
+*and against that R version* — which is why installs inside an old image
+essentially always succeed. Pointing an old R at today's CRAN is worse than it
+sounds: CRAN serves only each package's newest version, R silently drops from
+the index anything whose newest version requires a newer R, and there is no
+automatic fallback to an older compatible release. You'd trade "can't install
+this month's new package" for "can't install a growing share of mainstream
+ones".
+
+The consequence you will actually notice: a package released *after* the
+snapshot date reports `package 'X' is not available` even though it exists on
+CRAN. Three ways out, in increasing order of commitment:
+
+- **One-off install.** Take the URL from `getOption("repos")` and replace the
+  trailing date with `latest` (keep the `__linux__/<codename>` part — it is
+  what gets you prebuilt binaries):
+
+  ```r
+  install.packages("newpkg",
+                   repos = "https://p3m.dev/cran/__linux__/jammy/latest")
+  ```
+
+  Eyes open: the new package may pull newer versions of dependencies it shares
+  with everything else in that R version's library. Usually harmless; not what
+  you want under a years-old analysis you need byte-stable.
+
+- **A "newest compatible, else era version" default.** List both snapshots in
+  `options(repos = …)` (your `.Rprofile`, per project or per user). R merges
+  the indexes, drops anything requiring a newer R than yours, and installs the
+  highest surviving version — graceful degradation instead of a cliff:
+
+  ```r
+  options(repos = c(
+    P3M_PIN    = "https://p3m.dev/cran/__linux__/jammy/2024-04-23",
+    P3M_LATEST = "https://p3m.dev/cran/__linux__/jammy/latest"
+  ))
+  ```
+
+- **Long-lived projects: use renv.** A project that must keep working for
+  years should not depend on the shared per-version library at all — *any*
+  install into that library can move a dependency underneath it, whatever the
+  repos setting. `renv::init()` pins package versions and repos per project
+  (the lockfile's repos override the image default), upgrades become
+  deliberate and recorded (`renv::install(...)` + `renv::snapshot()`), and the
+  shared renv cache this app configures means twenty projects don't store
+  twenty copies of everything.
 
 Back to the [README](../README.md).

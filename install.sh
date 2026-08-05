@@ -473,9 +473,29 @@ if [[ -n $APP_NAME ]] && (( DO_LINK )); then
     die "--app-name cannot be combined with --link: it would rewrite manifest.yml in your checkout"
 fi
 
-# Deploy the app files. The repo root is the app now, so the copy must exclude the
-# repo's own furniture -- a .git directory inside an OnDemand app directory is at
-# best confusing and at worst something the PUN walks.
+# Deploy the app files. The repo root is the app, but only part of the repo IS
+# the app: the OnDemand files, plus the four bash files whose runtime home is
+# the deployed directory (~/.alias sources r-wrappers.sh from there, and
+# sync-images.sh runs from there, sourcing conf.sh/ui.sh as siblings).
+# Everything else -- installer, release tooling, tests, docs -- is repo
+# furniture, and deploying it made the app dir indistinguishable from a
+# checkout: exactly the confusion the repo/app split exists to end. The list is
+# an explicit INCLUDE so that a new repo file stays out of production unless
+# someone ships it on purpose.
+APP_FILES=(
+    form.yml.erb submit.yml.erb view.html.erb manifest.yml icon.png template
+    sync-images.sh r-wrappers.sh conf.sh ui.sh
+)
+
+# Repo furniture that deploys BEFORE the include-list shipped into the app dir;
+# removed from the target so existing installs converge. This list is frozen:
+# nothing ever needs adding to it, because unlisted files no longer reach the
+# app dir in the first place.
+APP_STALE=(
+    install.sh stage.sh release.sh test docs README.md CHANGELOG.md VERSION
+    form.yml.bak
+)
+
 deploy_app() {
     if [[ "$(readlink -f "$SRC_DIR")" == "$(readlink -f "$APP_DIR" 2>/dev/null)" ]]; then
         info "in place $APP_DIR (already the app directory)"
@@ -484,11 +504,17 @@ deploy_app() {
         do_mkdir "$(dirname "$APP_DIR")"
         dry || ln -sfn "$SRC_DIR" "$APP_DIR"
     else
-        info "copy     $SRC_DIR -> $APP_DIR  (excluding .git, .github)"
+        info "copy     $SRC_DIR -> $APP_DIR  (app files only)"
         do_mkdir "$APP_DIR"
-        dry || tar -cf - -C "$SRC_DIR" \
-                   --exclude=./.git --exclude=./.github --exclude=./.gitignore \
-                   --exclude=./CLAUDE.md . | tar -xf - -C "$APP_DIR"
+        dry || tar -cf - -C "$SRC_DIR" "${APP_FILES[@]}" | tar -xf - -C "$APP_DIR"
+        # Clean up after older deploys, but only in this branch: an in-place or
+        # --link target IS the checkout, where the furniture belongs. `.git` is
+        # deliberately not on the list -- if the app dir somehow holds a real
+        # checkout, deleting its history is not this script's call to make.
+        local _stale
+        for _stale in "${APP_STALE[@]}"; do
+            dry || rm -rf "${APP_DIR:?}/${_stale}"
+        done
     fi
     dry || chmod +x "$APP_DIR/sync-images.sh" 2>/dev/null || true
 
