@@ -298,6 +298,23 @@ sed 's/^ \{2\}//' > "${RSESSION_WRAPPER_FILE}" << EOL
   # staging dir, so this path always matches the app that launched the session
   # (same reason bin/auth is referenced via \$PWD above).
   export RSTUDIO_MCP_GUARD="${SESSION_DIR}/mcp-guard.R"
+  # Where mcptools (>= 1.0.1) puts its session/server IPC sockets. Its own
+  # fallback chain is MCPTOOLS_SOCKET_DIR > \$XDG_RUNTIME_DIR/mcptools >
+  # \$TMPDIR/mcptools-<user> > /tmp/mcptools-<user> -- and in a session the
+  # first two legs are broken: XDG_RUNTIME_DIR is unset under Slurm, and TMPDIR
+  # is the HOST'S mktemp -d path, which this script binds ONTO /tmp, so inside
+  # the container \$TMPDIR names a directory that does not exist. mcptools
+  # mkdir -p's it into a doubled path under the bind (verified) -- which works,
+  # but only by accident of this cluster's TMPDIR living under /tmp; a site
+  # whose TMPDIR points at unbound scratch would abort mcp_session() and the
+  # agent's server would silently answer from its own EMPTY R process. Pin the
+  # one path that is deterministic: container /tmp IS the job-private tmpdir
+  # (mktemp -d, mode 700), so sockets are per-job, node-local, and gone with
+  # the job -- and concurrent named slots on one node get separate socket
+  # namespaces for free (each job has its own /tmp bind). mcptools 1.0.0
+  # ignores the variable (abstract sockets); registration refuses < 1.0.1
+  # anyway (see the site profile).
+  export MCPTOOLS_SOCKET_DIR="/tmp/mcptools"
 <%- if agent_access == 'execute' -%>
   export BTW_RUN_R_ENABLED="true"
 <%- else -%>
@@ -388,7 +405,26 @@ local({
   mode <- Sys.getenv("RSTUDIO_MCP_ACCESS", unset = "")
   if (nzchar(mode)) {
     setHook("rstudio.sessionInit", function(newSession) {
-      if (requireNamespace("mcptools", quietly = TRUE)) {
+      if (!requireNamespace("mcptools", quietly = TRUE)) {
+        message("-- AI agent access was requested at launch, but package 'mcptools' ",
+                "is not installed in this R's library paths. ",
+                "install.packages(c('mcptools','btw')) to enable it. --")
+      } else if (utils::packageVersion("mcptools") < "1.0.1") {
+        # REFUSE -- don't warn-and-register -- below 1.0.1. Older mcptools
+        # listens on an abstract socket shared by every user on the node (the
+        # container shares the host network namespace) and do.call()s whatever
+        # function object arrives, unauthenticated: any local user could run R
+        # in this session, read-only mode included, and the run_r guard cannot
+        # help because it wraps tools server-side, not on the wire. 1.0.1 moved
+        # the sockets into a 0700 per-user directory and HMACs every message.
+        message("-- AI agent access: mcptools ",
+                utils::packageVersion("mcptools"),
+                " is too old to register safely. Versions before 1.0.1 listen ",
+                "on a node-wide UNAUTHENTICATED socket, letting any user on ",
+                "this compute node run R code in your session (read-only mode ",
+                "included). install.packages('mcptools') to update, then ",
+                "restart R. --")
+      } else {
         ok <- tryCatch({ mcptools::mcp_session(); TRUE },
                        error = function(e) {
                          message("-- MCP session registration FAILED: ",
@@ -425,10 +461,6 @@ local({
                           else "read it",
                           Sys.getenv("RSTUDIO_MCP_TOOLS", unset = "?")))
         }
-      } else {
-        message("-- AI agent access was requested at launch, but package 'mcptools' ",
-                "is not installed in this R's library paths. ",
-                "install.packages(c('mcptools','btw')) to enable it. --")
       }
     }, action = "append")
   }

@@ -16,7 +16,27 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ## [Unreleased]
 
-_Nothing yet._
+### Changed
+
+- **AI agent access now requires `mcptools` ≥ 1.0.1 and refuses to register
+  older versions.** Before 1.0.1, `mcptools` listened on a socket shared by
+  every user on the compute node and executed whatever arrived,
+  unauthenticated — any local user could run R code in an agent-enabled
+  session, read-only mode included. Upstream 1.0.1 moved the sockets into a
+  per-user 0700 directory and authenticates every message; sessions with an
+  older copy installed now get a console message explaining the risk and the
+  one-line update instead of a silently exposed registration.
+
+### Fixed
+
+- **MCP sockets are pinned to the job's private `/tmp`**
+  (`MCPTOOLS_SOCKET_DIR=/tmp/mcptools`). `mcptools` 1.0.1's default falls back
+  to `$TMPDIR`, which inside the container names a host path that only exists
+  here by accident of this cluster's `/tmp` layout — on a site whose `TMPDIR`
+  points at unbound scratch, session registration would abort and the agent
+  would silently answer from its own empty R process. Pinning also gives
+  concurrent named slots on one node separate socket namespaces, and the
+  sockets vanish with the job.
 
 ## [1.0.0] - 2026-08-04
 
