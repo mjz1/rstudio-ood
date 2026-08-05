@@ -18,8 +18,11 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ### Changed
 
-- **AI agent access now requires `mcptools` ≥ 1.0.1 and refuses to register
-  older versions.** Before 1.0.1, `mcptools` listened on a socket shared by
+- **Breaking: AI agent access now requires `mcptools` ≥ 1.0.1 and refuses to
+  register older versions** — if you installed `mcptools` before 2026-07-27,
+  agent access stops working until you `install.packages("mcptools")` and
+  restart R (the console message says exactly this). Deliberate: before 1.0.1,
+  `mcptools` listened on a socket shared by
   every user on the compute node and executed whatever arrived,
   unauthenticated — any local user could run R code in an agent-enabled
   session, read-only mode included. Upstream 1.0.1 moved the sockets into a
