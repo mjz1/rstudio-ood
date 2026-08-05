@@ -409,7 +409,13 @@ rstudio_mcp_init() {
     echo "  2. if you installed them just now, restart R (Session > Restart R): the session"
     echo "     registers with mcptools only at startup, so it is NOT registered yet. You are"
     echo "     registered once the console prints '-- MCP: agents in this session's terminal ... --'"
-    echo "  3. run your agent (claude, copilot) from this directory in the session's Terminal."
+    echo "  3. run your agent from this directory in the session's Terminal:"
+    echo "       claude"
+    echo "       copilot --allow-tool 'r-session' --allow-tool 'r-session-status'"
+    echo "     copilot prompts for approval on EVERY MCP call, so a non-interactive"
+    echo "     'copilot -p ...' run stalls on the first one without those flags."
+    echo "     (--allow-all-tools also works, but auto-approves copilot's own shell and"
+    echo "      file-write tools -- prefer naming the servers. See docs/ai-agents.md.)"
     echo "     An agent that was ALREADY running has not read this file -- restart it too."
 }
 

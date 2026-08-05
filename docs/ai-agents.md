@@ -106,6 +106,50 @@ session to connect to does not error — it answers from **its own empty
 process**. Ask the agent to list your objects; an empty environment where your
 data should be means one of the two restarts is still missing.
 
+### Copilot CLI needs its approvals declared up front
+
+Copilot CLI gates **every** MCP tool call behind an interactive approval prompt,
+so a scripted `copilot -p "..."` run stalls on the first tool call with nobody
+there to answer it. Claude Code needs no equivalent flag — `.mcp.json` is enough
+there — so this is a Copilot-specific step, not a broken setup.
+
+Allow the two servers this app registers:
+
+```bash
+copilot --allow-tool 'r-session' --allow-tool 'r-session-status' \
+        -p "describe the data frames in my session"
+```
+
+`--allow-tool` takes a `kind(argument)` pattern. A bare MCP server name allows
+every tool that server registers; naming a tool narrows it to that one:
+
+```bash
+--allow-tool 'r-session-status(rstudio_session_status)'   # only the status probe
+--deny-tool  'r-session(btw_tool_run_r)'                  # read the session, never execute
+```
+
+Denials beat every allow, `--allow-all-tools` included, so that second form is a
+real rail and not a suggestion.
+
+**Prefer the per-server form to `--allow-all-tools`.** The blanket flag is much
+broader than MCP: it also auto-approves Copilot's own `shell(...)` and
+`write(...)` tools, so an agent you meant to let read your R session can equally
+run commands and overwrite files without asking. (`--allow-all` and `--yolo` go
+further again, adding paths and URLs.)
+
+The honest trade-off: `--allow-tool 'r-session'` covers only the MCP calls, so if
+the same run also has Copilot editing a file or running a shell command, *that*
+call prompts and a `-p` run stalls there instead. Allow those kinds explicitly —
+`--allow-tool 'shell(git:*)'`, `--allow-tool 'write(analysis.R)'` — rather than
+reaching for the blanket flag. Copilot's help calls `--allow-all-tools`
+"required for non-interactive mode"; that holds only when you cannot enumerate
+what the run needs.
+
+Verified against **Copilot CLI 1.0.78** (`copilot help permissions`), which is
+also where the current patterns are documented. This repo pins no Copilot
+version and the flags have changed between releases, so check that topic if
+yours behaves differently.
+
 ### Who decides which tools are served
 
 The launch form does, per session, via `RSTUDIO_MCP_TOOLS` (and the guard's

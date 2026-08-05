@@ -170,6 +170,12 @@ either fails *silently* — an MCP server with no session to connect to answers
 from its own empty process — so verify once by asking the agent to list your
 objects.
 
+**Copilot CLI additionally needs its approvals declared**: it prompts on every
+MCP tool call, so `copilot -p "..."` stalls on the first one unless you launch
+it as `copilot --allow-tool 'r-session' --allow-tool 'r-session-status'`.
+Prefer that to `--allow-all-tools`, which also auto-approves Copilot's own shell
+and file-write tools. Claude Code needs no such flag.
+
 Two things to know before using execute mode: you and the agent share one
 single-threaded R session (calls serialize, side effects are shared), and agent
 code that stops to **ask a question** would wedge that session — guarded here,

@@ -105,6 +105,17 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
   are not, and they cannot be filtered — RStudio emits them at `ERROR`, above
   any threshold the app can set — but they now land in a per-session log file
   instead of the R console (see Fixed).
+- **Copilot CLI's approval flags are documented.** Copilot gates every MCP tool
+  call behind an interactive prompt, so a non-interactive `copilot -p "..."`
+  run against the shipped `.mcp.json` stalls on the first tool call with no way
+  to answer it — Claude Code needs no equivalent flag, so the setup looks
+  broken rather than incomplete. The README, `docs/ai-agents.md` and
+  `rstudio_mcp_init`'s own output now give the launch line
+  (`--allow-tool 'r-session' --allow-tool 'r-session-status'`), the narrower
+  per-tool and `--deny-tool` forms, and the reason to prefer them over
+  `--allow-all-tools`, which also auto-approves Copilot's shell and file-write
+  tools. Verified against Copilot CLI 1.0.78; the flags have changed between
+  releases and nothing here pins a version.
 
 ### Changed
 
