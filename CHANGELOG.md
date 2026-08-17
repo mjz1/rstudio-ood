@@ -16,6 +16,10 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [1.1.0] - 2026-08-17
+
 ### Changed
 
 - **Breaking: AI agent access now requires `mcptools` ≥ 1.0.1 and refuses to
@@ -372,7 +376,8 @@ became something another person could install.
   are bash-only instead of having `.bashrc` edited pointlessly; an existing
   `r-wrappers.sh` source line is found across chained rc files.
 
-[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/mjz1/rstudio-ood/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mjz1/rstudio-ood/compare/v0.9.7...v1.0.0
 [0.9.7]: https://github.com/mjz1/rstudio-ood/compare/v0.9.6...v0.9.7
 [0.9.6]: https://github.com/mjz1/rstudio-ood/compare/v0.9.5...v0.9.6
