@@ -16,7 +16,22 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 ## [Unreleased]
 
-_Nothing yet._
+### Fixed
+
+- **The sbatch'd image sync died at startup** (`head2: command not found`).
+  Slurm runs a *copy* of the submitted script from its spool directory, so
+  `ui.sh` is never beside it and the plain-text fallback stubs take over —
+  and they were missing `head2`, called on every run since mid-July. Every
+  `--sync` submitted from a login shell failed within seconds; only inline
+  runs (inside an existing allocation) worked. The stubs now cover every
+  ui function the script calls.
+- **The sbatch'd sync job also lost its configuration the same way.** The
+  spool copy cannot source `conf.sh`, and conf.sh's values are deliberately
+  unexported, so sbatch's `--export=ALL` did not carry them either: the job
+  fell back to the *default* image directory and silently synced the wrong
+  tree whenever the configured one differed. `sync_sbatch` now exports the
+  resolved config into the job's environment (process-local, so the
+  no-export rule still holds for the user's shell).
 
 ## [1.1.0] - 2026-08-17
 

@@ -80,6 +80,11 @@ else
     warn() { printf '! warn: %s\n' "$*" >&2; }
     note() { printf '  %s\n' "$*"; }
     ok()   { printf '  %s %s\n' "$G_OK" "$*"; }
+    # The sbatch path ALWAYS runs on these stubs: slurm copies the submitted
+    # script into its spool dir, so ui.sh is never beside it. A ui.sh function
+    # used here but missing below kills the sync job at startup (head2 did,
+    # silently, for every sbatch'd sync after 9cbad8b introduced the call).
+    head2(){ printf '\n%s\n' "$1"; }
 fi
 log()  { printf '%s\n' "$*" >&2; }
 
@@ -447,6 +452,18 @@ sync_local() {
 SYNC_JID=""
 sync_sbatch() {
     mkdir -p "$LOGDIR"
+    # The job cannot re-derive any of this: slurm runs a COPY of this script
+    # from its spool dir, so conf.sh is never beside it -- and conf.sh's
+    # values are plain variables, which sbatch's default --export=ALL does
+    # not carry. Without these exports the job silently falls back to
+    # env-or-default and syncs the WRONG TREE (the default image dir, not
+    # the configured one). Exporting here is process-local -- this script's
+    # own environment, gone at exit -- so conf.sh's no-export rule holds for
+    # the user's shell; inside the job, env-wins precedence picks these up.
+    export RSTUDIO_IMAGE_DIR="$IMAGE_DIR" RSTUDIO_SYNC_ROLE="$SYNC_ROLE" \
+           RSTUDIO_GHCR_REPO="$GHCR_REPO" RSTUDIO_DOCKER_REPO="$DOCKER_REPO" \
+           RSTUDIO_KEEP_PREV="$KEEP_PREV" RSTUDIO_VERSIONS="${VERSIONS[*]}" \
+           RSTUDIO_SINGULARITY="$SINGULARITY"
     local jid
     jid=$(sbatch --parsable \
         --job-name=rstudio-img-sync \
