@@ -81,6 +81,12 @@ Once per project, in a session launched with agent access on:
 install.packages(c("mcptools", "btw"))   # into the project library
 ```
 
+**`mcptools` must be ≥ 1.0.1**, and the session refuses to register older
+versions: before 1.0.1 the session's socket was reachable by every user on the
+same compute node, unauthenticated — anyone on the node could run R in your
+session. A fresh install is fine (CRAN has had 1.0.1 since 2026-07-27); if the
+console says your copy is too old, `install.packages("mcptools")` and restart R.
+
 ```bash
 rstudio_mcp_init            # writes ./.mcp.json (committable; the lab inherits it)
 claude                      # or your agent, run from the project in the Terminal
@@ -295,3 +301,9 @@ expires or you quit the session.
 
 No network ports are involved, which is also why there is no login-node or
 cross-node variant: the transport is local by nature.
+
+The sockets themselves live under the job's private `/tmp` (the session sets
+`MCPTOOLS_SOCKET_DIR=/tmp/mcptools`), which is why the agent must run in the
+*session's* Terminal — a shell outside the job cannot see them. Each job has
+its own `/tmp`, so concurrent named slots on one node cannot see each other's
+sessions, and the sockets vanish with the job.

@@ -397,6 +397,24 @@ check('the prompt-disarming is runtime-gated on execute, so read mode never appl
   mcp_read.include?('needs.promptUser') &&                      # static text: present
     mcp_read.include?('if (identical(mode, "execute")) {')      # but gated at runtime
 end
+# mcptools >= 1.0.1 resolves its socket dir MCPTOOLS_SOCKET_DIR >
+# XDG_RUNTIME_DIR > $TMPDIR > /tmp -- and in a session the middle legs are
+# broken (XDG_RUNTIME_DIR unset under Slurm; TMPDIR is the HOST path bound
+# onto /tmp, nonexistent inside the container). Pin the one deterministic
+# path: container /tmp IS the job-private tmpdir. Off mode must not export
+# it -- the wrapper stays byte-identical to a no-MCP session.
+check('agent modes pin MCPTOOLS_SOCKET_DIR to the job-private /tmp; off exports nothing') do
+  mcp_exec.include?('export MCPTOOLS_SOCKET_DIR="/tmp/mcptools"') &&
+    mcp_read.include?('export MCPTOOLS_SOCKET_DIR="/tmp/mcptools"') &&
+    !sh.include?('MCPTOOLS_SOCKET_DIR')
+end
+# Below 1.0.1 the session socket is a node-wide abstract address with no
+# authentication: any user on the compute node can execute R in the session,
+# read-only mode included. Registration must REFUSE, not warn-and-register.
+check('the site profile refuses to register mcptools < 1.0.1 (unauthenticated node-wide socket)') do
+  mcp_exec.include?('utils::packageVersion("mcptools") < "1.0.1"') &&
+    mcp_exec.include?('too old to register safely')
+end
 
 mcp_evil = render(script_erb, context_for(
   rstudio_image: File.join(IMAGES, 'rstudio-4.6.sif'),

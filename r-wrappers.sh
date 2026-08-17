@@ -406,6 +406,7 @@ rstudio_mcp_init() {
         echo "        'AI agent access' set on the form (the file is ready for it)."
     fi
     echo "  1. install the R packages into this project's library:  install.packages(c('mcptools','btw'))"
+    echo "     (mcptools must be >= 1.0.1 -- the session refuses to register older versions, and says so)"
     echo "  2. if you installed them just now, restart R (Session > Restart R): the session"
     echo "     registers with mcptools only at startup, so it is NOT registered yet. You are"
     echo "     registered once the console prints '-- MCP: agents in this session's terminal ... --'"

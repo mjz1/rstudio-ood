@@ -161,6 +161,10 @@ rstudio_mcp_init            # writes ./.mcp.json (committable; the lab inherits 
 claude                      # or your agent, run from the project in the Terminal
 ```
 
+`mcptools` must be ≥ 1.0.1 (a fresh install is); the session refuses to
+register older versions and says why — see
+[docs/ai-agents.md](docs/ai-agents.md) for the security background.
+
 **Expect two restarts the first time, because nothing prompts you for them.**
 Both halves are read once, at startup: the session registers with `mcptools`
 when it starts, and your agent reads `.mcp.json` when it launches. So after that

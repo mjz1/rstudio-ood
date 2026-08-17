@@ -4,8 +4,9 @@ Notable changes, newest first. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
 [semantic versioning](https://semver.org/).
 
-**`0.9.x` is pre-release**: the app is public but not yet announced to users, so
-breaking changes are still cheap. `1.0.0` will mark the release to the lab.
+**`1.0.0` is the release to the lab** — everything before it was pre-announcement
+bake-in. Versions bump when a downstream install should update; the notice in
+the launch form and at session start fires on any difference from `main/VERSION`.
 
 Update an existing install to the latest release with:
 
@@ -16,6 +17,33 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 ## [Unreleased]
 
 _Nothing yet._
+
+## [1.1.0] - 2026-08-17
+
+### Changed
+
+- **Breaking: AI agent access now requires `mcptools` ≥ 1.0.1 and refuses to
+  register older versions** — if you installed `mcptools` before 2026-07-27,
+  agent access stops working until you `install.packages("mcptools")` and
+  restart R (the console message says exactly this). Deliberate: before 1.0.1,
+  `mcptools` listened on a socket shared by
+  every user on the compute node and executed whatever arrived,
+  unauthenticated — any local user could run R code in an agent-enabled
+  session, read-only mode included. Upstream 1.0.1 moved the sockets into a
+  per-user 0700 directory and authenticates every message; sessions with an
+  older copy installed now get a console message explaining the risk and the
+  one-line update instead of a silently exposed registration.
+
+### Fixed
+
+- **MCP sockets are pinned to the job's private `/tmp`**
+  (`MCPTOOLS_SOCKET_DIR=/tmp/mcptools`). `mcptools` 1.0.1's default falls back
+  to `$TMPDIR`, which inside the container names a host path that only exists
+  here by accident of this cluster's `/tmp` layout — on a site whose `TMPDIR`
+  points at unbound scratch, session registration would abort and the agent
+  would silently answer from its own empty R process. Pinning also gives
+  concurrent named slots on one node separate socket namespaces, and the
+  sockets vanish with the job.
 
 ## [1.0.0] - 2026-08-04
 
@@ -348,7 +376,8 @@ became something another person could install.
   are bash-only instead of having `.bashrc` edited pointlessly; an existing
   `r-wrappers.sh` source line is found across chained rc files.
 
-[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/mjz1/rstudio-ood/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mjz1/rstudio-ood/compare/v0.9.7...v1.0.0
 [0.9.7]: https://github.com/mjz1/rstudio-ood/compare/v0.9.6...v0.9.7
 [0.9.6]: https://github.com/mjz1/rstudio-ood/compare/v0.9.5...v0.9.6
