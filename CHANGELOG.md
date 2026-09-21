@@ -18,6 +18,25 @@ curl -fsSL https://raw.githubusercontent.com/mjz1/rstudio-ood/main/install.sh | 
 
 _Nothing yet._
 
+## [1.1.1] - 2026-09-21
+
+### Fixed
+
+- **The sbatch'd image sync died at startup** (`head2: command not found`).
+  Slurm runs a *copy* of the submitted script from its spool directory, so
+  `ui.sh` is never beside it and the plain-text fallback stubs take over —
+  and they were missing `head2`, called on every run since mid-July. Every
+  `--sync` submitted from a login shell failed within seconds; only inline
+  runs (inside an existing allocation) worked. The stubs now cover every
+  ui function the script calls.
+- **The sbatch'd sync job also lost its configuration the same way.** The
+  spool copy cannot source `conf.sh`, and conf.sh's values are deliberately
+  unexported, so sbatch's `--export=ALL` did not carry them either: the job
+  fell back to the *default* image directory and silently synced the wrong
+  tree whenever the configured one differed. `sync_sbatch` now exports the
+  resolved config into the job's environment (process-local, so the
+  no-export rule still holds for the user's shell).
+
 ## [1.1.0] - 2026-08-17
 
 ### Changed
@@ -376,7 +395,8 @@ became something another person could install.
   are bash-only instead of having `.bashrc` edited pointlessly; an existing
   `r-wrappers.sh` source line is found across chained rc files.
 
-[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/mjz1/rstudio-ood/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/mjz1/rstudio-ood/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/mjz1/rstudio-ood/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mjz1/rstudio-ood/compare/v0.9.7...v1.0.0
 [0.9.7]: https://github.com/mjz1/rstudio-ood/compare/v0.9.6...v0.9.7
